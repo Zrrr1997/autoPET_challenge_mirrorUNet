@@ -1,0 +1,11 @@
+checkpoints/*
+__pycache__/*
+average_eval/*
+cache/*
+runs/*
+data/*
+loss/__pycache__/*
+models/__pycache__/*
+utils/__pycache__/*
+utils/rename.sh
+
