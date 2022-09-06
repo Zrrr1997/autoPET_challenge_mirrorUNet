@@ -197,57 +197,40 @@ if __name__ == "__main__":
     @trainer.on(Events.ITERATION_COMPLETED(every=validation_every_n_iters))
     def run_validation(engine):
         global best_f1_dice, best_bg_dice
-        #####################################
-        ##    SLIDING WINDOW EVALUATION    ##
-        #####################################
-        if args.sliding_window:
-            if args.task == 'classification':
-                classification_sliding_window(args, val_loader, net, evaluator, device, input_mod=input_mod)
-                exit()
-            elif args.task == 'segmentation':
-                print("Starting sliding window inference for segmentation! This might take a while...")
-                f1_dice, bg_dice = segmentation_sliding_window(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod)
-                print('F1 dice:', f1_dice, 'BG dice:', bg_dice)
 
-                if args.evaluate_only:
-                    exit()
+        #####################################
+        ##         CLASSIFICATION          ##
+        #####################################
+        if args.task=='classification':
+            classification(evaluator, val_loader, net, args, device, input_mod=input_mod)
+            if args.evaluate_only:
+                exit()
+        #####################################
+        ##         SEGMENTATION            ##
+        #####################################
+        if args.task=='segmentation':
+            f1_dice, bg_dice = segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=input_mod)
+            if args.evaluate_only:
+                exit()
+            if args.sliding_window:
                 if f1_dice > best_f1_dice:
                     torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice_{f1_dice}.pth'))
                     best_f1_dice = f1_dice
                 if bg_dice > best_bg_dice:
                     torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_bg_dice_{bg_dice}.pth'))
-                return
-
-            elif args.task == 'transference':
-                if args.sliding_window:
-                    print("Starting sliding window inference for transference! This might take a while...")
-                    transference_sliding_window(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod)
-                if args.evaluate_only:
-                    exit()
-                return
-            return
-
         #####################################
-        ##      NORMAL CLASSIFICATION      ##
-        #####################################
-        if args.task=='classification':
-            classification_normal(evaluator, val_loader, net, args, device, input_mod=input_mod)
-            if args.evaluate_only:
-                exit()
-        #####################################
-        ##        NORMAL SEGMENTATION      ##
-        #####################################
-        if args.task=='segmentation':
-            segmentation_normal(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=input_mod)
-            if args.evaluate_only:
-                exit()
-        #####################################
-        ##        NORMAL TRANSFERENCE      ##
+        ##         TRANSFERENCE            ##
         #####################################
         if args.task=='transference':
-            transference_normal(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)
+            f1_dice, bg_dice = transference(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)
             if args.evaluate_only:
                 exit()
+            if args.sliding_window:
+                if f1_dice > best_f1_dice:
+                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice_{f1_dice}.pth'))
+                    best_f1_dice = f1_dice
+                if bg_dice > best_bg_dice:
+                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_bg_dice_{bg_dice}.pth'))
         return
 
     # Stats event handler to print validation stats via evaluator
