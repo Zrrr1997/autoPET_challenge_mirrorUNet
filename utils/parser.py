@@ -55,13 +55,23 @@ def prepare_parser(parser):
     parser.add_argument('--no_cache', default=False, action='store_true',
                          help='Toggle using CacheDataset/PersistentDataset.')
 
+    # evaluation
+    parser.add_argument('--logit_fusion', default=False, action='store_true',
+                         help='Fusion by averaging the logits.')
+    parser.add_argument('--decision_fusion', default=False, action='store_true',
+                         help='Fusion by (weak) averaging the predictions.')
+
 
 
     # Model
     parser.add_argument('--load_weights', type=str, default=None,
                          help='Load model from this directory.')
+    parser.add_argument('--load_weights_second_model', type=str, default=None,
+                         help='Load model from this directory.')
     parser.add_argument('--load_best_val_weights', type=str, default=None,
                          help='Load best validation model from the given directory.')
+    parser.add_argument('--load_keyword', type=str, default=None,
+                             help='Keyword to search for in the weights file.')
     parser.add_argument('--task', type=str, default='segmentation',
                          help='Training task for the model: [segmentation, reconstruction, classification, segmentation_classification, transference]')
     parser.add_argument('--early_fusion', default=False, action='store_true',

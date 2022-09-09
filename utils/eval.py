@@ -11,7 +11,7 @@ from ignite.engine import (
 # MONAI
 from monai.inferers import sliding_window_inference
 from monai.data import list_data_collate, decollate_batch
-from monai.metrics import compute_meandice
+from monai.metrics import compute_meandice, compute_meaniou
 from monai.visualize import GradCAM
 
 
@@ -89,8 +89,8 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
             out = torch.stack([post_pred(i) for i in decollate_batch(out)])
             label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
-            dice = compute_meandice(label, out, include_background=True)
-            dice_F1 = compute_meandice(label, out, include_background=False)
+            dice = compute_meandice(out, label, include_background=True)
+            dice_F1 = compute_meandice(out, label, include_background=False)
 
             dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
             dices_bg += list(dice.cpu().detach().numpy().flatten())
@@ -128,8 +128,8 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
             mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
             label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
-            dice = compute_meandice(label, mask_out, include_background=True)
-            dice_F1 = compute_meandice(label, mask_out, include_background=False)
+            dice = compute_meandice(mask_out, label, include_background=True)
+            dice_F1 = compute_meandice(mask_out, label, include_background=False)
 
             dices_fg.append(dice_F1.cpu().detach().numpy().flatten())
             dices_bg.append(dice.cpu().detach().numpy().flatten())
@@ -144,7 +144,59 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
 
     net.train()
     return dice_F1, dice_bg
+def segmentation_late_fusion(evaluator, val_loader, net, net_2, args, post_pred, post_label, device, input_mod=None):
+    # Assume input_mod_1 = ct_vol, input_mod_2 = ct_pet_vol
+    dices_fg, dices_bg = [], []
+    net.eval()
+    net_2.eval()
+    with torch.no_grad():
+        for i, val_data in tqdm(enumerate(val_loader)):
+            (inp, label) = prepare_batch(val_data, args, device=device, input_mod='ct_pet_vol')
 
+
+            inp_1 = inp[:, :1]
+            inp_2 = inp[:, 1:]
+
+            if args.sliding_window:
+                roi_size = (96, 96, 96)
+                sw_batch_size = 4
+                out_1 = sliding_window_inference(inp_1, roi_size, sw_batch_size, net, progress=False)
+                out_2 = sliding_window_inference(inp_2, roi_size, sw_batch_size, net_2, progress=False)
+            else:
+                out_1 = net(inp_1)
+                out_2 = net_2(inp_2)
+
+            if args.logit_fusion:
+                out = (out_1 + out_2) / 2
+                out = torch.stack([post_pred(i) for i in decollate_batch(out)])
+            elif args.decision_fusion:
+
+                out_1 = torch.stack([post_pred(i) for i in decollate_batch(out_1)])
+                out_2 = torch.stack([post_pred(i) for i in decollate_batch(out_2)])
+                out = (out_1 + out_2) / 2
+                out = (out >= 0.5) * 1.0
+            else:
+                print('[ERROR] Only logit and decision fusion are implemented!')
+                exit()
+
+            label = torch.stack([post_label(i) for i in decollate_batch(label)])
+
+
+            dice = compute_meandice(out, label, include_background=True)
+            dice_F1 = compute_meandice(out, label, include_background=False)
+
+
+            dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
+            dices_bg += list(dice.cpu().detach().numpy().flatten())
+
+    f1_dice = np.mean(np.array(dices_fg))
+    bg_dice = np.mean(np.array(dices_bg))
+    print('Mean dice foreground:', f1_dice)
+    print('Mean dice background:', bg_dice)
+    suffix = 'decision' if args.decision_fusion else 'logit'
+    with open(os.path.join(args.log_dir, f'late_fusion_{suffix}.txt'), 'w') as f:
+        f.write(f'f1 dice: {f1_dice}, bg_dice: {bg_dice}')
+    return f1_dice, bg_dice
 # not implemented
 def segmentation_classification():
     pass

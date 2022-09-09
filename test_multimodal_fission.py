@@ -71,7 +71,9 @@ if __name__ == "__main__":
 
     # Create Model, Loss, and Optimizer
     device = torch.device(f"cuda:{args.gpu}") if args.gpu >= 0 else torch.device("cpu")
-    net = prepare_model(device=device, out_channels=out_channels, args=args)
+    net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
+
+
 
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128]
@@ -209,7 +211,10 @@ if __name__ == "__main__":
         ##         SEGMENTATION            ##
         #####################################
         if args.task=='segmentation':
-            f1_dice, bg_dice = segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=input_mod)
+            if net_2 is not None and args.load_weights_second_model is not None:
+                f1_dice, bg_dice = segmentation_late_fusion(evaluator, val_loader, net, net_2, args, post_pred, post_label, device)
+            else:
+                f1_dice, bg_dice = segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=input_mod)
             if args.evaluate_only:
                 exit()
             if args.sliding_window:
@@ -259,6 +264,6 @@ if __name__ == "__main__":
         train_epochs = args.epochs
         state = trainer.run(train_loader, train_epochs)
     else:
-        state = evaluator.run(val_loader)
         run_validation(evaluator)
+        state = evaluator.run(val_loader)
     print(state)
