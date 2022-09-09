@@ -410,7 +410,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
         else:
             print(f"[ERROR] Wrong input modality!")
             exit()
-    if (args.task in ['segmentation', 'transference'] or args.class_backbone == 'Ensemble') and args.sliding_window:
+    elif (args.task in ['segmentation', 'transference'] or args.class_backbone == 'Ensemble') and args.sliding_window:
         if args.single_mod is None: # input_mod == ct_pet_vol
             val_transforms= Compose(
                 [

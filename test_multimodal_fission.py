@@ -213,6 +213,9 @@ if __name__ == "__main__":
             if args.evaluate_only:
                 exit()
             if args.sliding_window:
+                writer.add_scalar('F1 Dice', f1_dice, trainer.state.iteration)
+                writer.add_scalar('BG Dice', bg_dice, trainer.state.iteration)
+
                 if f1_dice > best_f1_dice:
                     torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice_{f1_dice}.pth'))
                     best_f1_dice = f1_dice
@@ -226,6 +229,9 @@ if __name__ == "__main__":
             if args.evaluate_only:
                 exit()
             if args.sliding_window:
+                writer.add_scalar('F1 Dice', f1_dice, trainer.state.iteration)
+                writer.add_scalar('BG Dice', bg_dice, trainer.state.iteration)
+
                 if f1_dice > best_f1_dice:
                     torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice_{f1_dice}.pth'))
                     best_f1_dice = f1_dice

@@ -167,6 +167,8 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
                   path_MIP_segs_val_y,
                   path_MIP_segs_val_z)]
 
+
+
     if args.evaluate_only:
         train_files = train_files[:4] # Don't read so many training files...
         val_files = val_files
