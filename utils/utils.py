@@ -74,7 +74,7 @@ def prepare_loss(args):
     elif args.task == 'classification':
         loss = torch.nn.BCELoss()
     elif args.task == 'transference':
-        loss = DiceCE_Rec_Loss(to_onehot_y=True, softmax=True, include_background=args.include_background, batch=True)
+        loss = DiceCE_Rec_Loss(to_onehot_y=True, softmax=True, include_background=args.include_background, batch=True, lambda_rec=args.lambda_rec, lambda_ce=args.lambda_seg, lambda_dice=args.lambda_seg)
         print('Using DiceCE loss with reconstruction.')
     else:
         raise ValueError(f"Task {args.task} is not supported!")

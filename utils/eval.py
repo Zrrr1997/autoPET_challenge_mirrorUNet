@@ -69,7 +69,7 @@ def classification(evaluator, val_loader, net, args, device, input_mod=None):
     net.train()
     return
 
-def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=None):
+def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=None, trainer=None, writer=None):
     if not args.sliding_window:
         evaluator.run(val_loader)
     dices_bg, dices_fg = [], []
@@ -97,6 +97,10 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
 
     f1_dice = np.mean(np.array(dices_fg))
     bg_dice = np.mean(np.array(dices_bg))
+    if args.learnable_th:
+        print('Decision Threshold', net.learnable_th.cpu().detach().numpy())
+        writer.add_scalar('Learnable Threshold', net.learnable_th.cpu().detach().numpy(), trainer.state.iteration)
+
 
     net.train()
     print('Mean dice foreground:', f1_dice)
@@ -112,7 +116,7 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
     dices_fg, dices_bg, rec_loss = [], [], []
     net.eval()
     with torch.no_grad():
-        for i, val_data in enumerate(val_loader):
+        for i, val_data in tqdm(enumerate(val_loader)):
             (inp, label) = prepare_batch(val_data, args, device=device, input_mod=input_mod)
 
             if args.sliding_window:
@@ -131,8 +135,9 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
             dice = compute_meandice(mask_out, label, include_background=True)
             dice_F1 = compute_meandice(mask_out, label, include_background=False)
 
-            dices_fg.append(dice_F1.cpu().detach().numpy().flatten())
-            dices_bg.append(dice.cpu().detach().numpy().flatten())
+            dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
+            dices_bg += list(dice.cpu().detach().numpy().flatten())
+
 
     dice_F1 = np.mean(np.array(dices_fg))
     dice_bg = np.mean(np.array(dices_bg))

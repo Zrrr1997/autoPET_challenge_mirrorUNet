@@ -113,6 +113,7 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
         print('-------\n')
         print(f'Loading weights from {path}')
         print('-------')
+        
         net.load_pretrained_unequal(path) # ignore layers with size mismatch - needed when changing output channels
 
 

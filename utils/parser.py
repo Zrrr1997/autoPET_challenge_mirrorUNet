@@ -90,6 +90,12 @@ def prepare_parser(parser):
                          help='CoAtNet version: [0, 1, 2, 3, 4].')
     parser.add_argument('--mirror_th', type=float, default=0.1,
                         help='Weight for CT-modalitiy in the late fusion for mirror-UNet (experiment 1).')
+    parser.add_argument('--learnable_th', default=False, action='store_true',
+                        help='Make the fusion threshold learnable for mirror-UNet in the late fusion for mirror-UNet (experiment 1).')
+    parser.add_argument('--lambda_rec', type=float, default=1.0,
+                        help='Weight for the reconstruction loss in the transference (experiment 2).')
+    parser.add_argument('--lambda_seg', type=float, default=1.0,
+                        help='Weight for the segmentation loss in the transference (experiment 2).')
 
 
 

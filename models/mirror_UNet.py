@@ -168,6 +168,8 @@ class Mirror_UNet(nn.Module):
         self.adn_ordering = adn_ordering
         self.task = task
         self.args = args
+        self.learnable_th = nn.Parameter(torch.tensor(0.5), requires_grad=True)
+        print('Initial Threshold:', self.learnable_th)
 
         def _create_block(
             inc: int, outc: int, channels: Sequence[int], strides: Sequence[int], is_top: bool
@@ -340,7 +342,10 @@ class Mirror_UNet(nn.Module):
         x_2 = self.path_2(x[:,1].unsqueeze(dim=1))  # PET
 
         if self.task == 'segmentation':
-            out = self.args.mirror_th * x_1 + (1 - self.args.mirror_th) * x_2 # For decision fusion segmentation (exp_1)
+            if self.args.learnable_th:
+                out = torch.clamp(self.learnable_th, 0, 1) * x_1 + (1 - torch.clamp(self.learnable_th, 0, 1)) * x_2
+            else:
+                out = self.args.mirror_th * x_1 + (1 - self.args.mirror_th) * x_2 # For decision fusion segmentation (exp_1)
             return out
         elif self.task == 'reconstruction' or self.task == 'transference':
             x_12 = torch.cat((x_1, x_2), dim=1)

@@ -78,6 +78,8 @@ if __name__ == "__main__":
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128]
     train_loader, val_loader, train_files, val_files = prepare_loaders(spatial_size=spatial_size, args=args)
+
+
     writer = SummaryWriter(log_dir = args.log_dir)
 
     # Write the current configuration to file
@@ -92,6 +94,7 @@ if __name__ == "__main__":
     # Hyperparameters
     loss = prepare_loss(args)
     lr = args.lr
+
     opt = torch.optim.Adam(net.parameters(), lr, weight_decay=1e-5)
 
     attention = None
@@ -187,7 +190,7 @@ if __name__ == "__main__":
         checkpoint_handler_best_val = ModelCheckpoint(
             args.ckpt_dir, "net_best_val", n_saved=1, require_empty=False, score_function=default_score_fn
         )
-        if args.task in ['segmentation', 'trasference']:
+        if args.task in ['segmentation', 'transference']:
             checkpoint_handler_best_val_F1 = ModelCheckpoint(
                 args.ckpt_dir, "net_best_val_F1", n_saved=1, require_empty=False, score_function=default_score_fn_F1
             )
@@ -214,7 +217,7 @@ if __name__ == "__main__":
             if net_2 is not None and args.load_weights_second_model is not None:
                 f1_dice, bg_dice = segmentation_late_fusion(evaluator, val_loader, net, net_2, args, post_pred, post_label, device)
             else:
-                f1_dice, bg_dice = segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=input_mod)
+                f1_dice, bg_dice = segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=input_mod, trainer=trainer, writer=writer)
             if args.evaluate_only:
                 exit()
             if args.sliding_window:
@@ -222,10 +225,15 @@ if __name__ == "__main__":
                 writer.add_scalar('BG Dice', bg_dice, trainer.state.iteration)
 
                 if f1_dice > best_f1_dice:
-                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice_{f1_dice}.pth'))
+                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice.pth'))
                     best_f1_dice = f1_dice
+                    with open(os.path.join(args.ckpt_dir, f'best_f1_dice.txt'), 'a+') as f:
+                        f.write(str(best_f1_dice) + '\n')
                 if bg_dice > best_bg_dice:
-                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_bg_dice_{bg_dice}.pth'))
+                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_bg_dice.pth'))
+                    best_bg_dice = bg_dice
+                    with open(os.path.join(args.ckpt_dir, f'best_bg_dice.txt'), 'a+') as f:
+                        f.write(str(best_bg_dice) + '\n')
         #####################################
         ##         TRANSFERENCE            ##
         #####################################
@@ -238,10 +246,15 @@ if __name__ == "__main__":
                 writer.add_scalar('BG Dice', bg_dice, trainer.state.iteration)
 
                 if f1_dice > best_f1_dice:
-                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice_{f1_dice}.pth'))
+                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice.pth'))
                     best_f1_dice = f1_dice
+                    with open(os.path.join(args.ckpt_dir, f'best_f1_dice.txt'), 'a+') as f:
+                        f.write(str(best_f1_dice) + '\n')
                 if bg_dice > best_bg_dice:
-                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_bg_dice_{bg_dice}.pth'))
+                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_bg_dice.pth'))
+                    best_bg_dice = bg_dice
+                    with open(os.path.join(args.ckpt_dir, f'best_bg_dice.txt'), 'a+') as f:
+                        f.write(str(best_bg_dice) + '\n')
         return
 
     # Stats event handler to print validation stats via evaluator
@@ -262,8 +275,10 @@ if __name__ == "__main__":
 
     if not args.evaluate_only:
         train_epochs = args.epochs
+
         state = trainer.run(train_loader, train_epochs)
     else:
+
         run_validation(evaluator)
         state = evaluator.run(val_loader)
     print(state)
