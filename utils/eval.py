@@ -9,10 +9,14 @@ from ignite.engine import (
     _prepare_batch,
 )
 # MONAI
+import monai
 from monai.inferers import sliding_window_inference
 from monai.data import list_data_collate, decollate_batch
 from monai.metrics import compute_meandice, compute_meaniou
 from monai.visualize import GradCAM
+from monai.transforms import Resize, AddChannel
+import torch.nn.functional as nnf
+
 
 
 # Auxiliary method to load (sample, label) depending on the task and configuration
@@ -70,10 +74,12 @@ def classification(evaluator, val_loader, net, args, device, input_mod=None):
     return
 
 def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=None, trainer=None, writer=None):
-    if not args.sliding_window:
+    if not args.sliding_window and False: # TODO Remove False
         evaluator.run(val_loader)
     dices_bg, dices_fg = [], []
     net.eval()
+
+
     with torch.no_grad():
         for i, val_data in tqdm(enumerate(val_loader)):
             (inp, label) = prepare_batch(val_data, args, device=device, input_mod=input_mod)
@@ -81,19 +87,33 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
             if args.sliding_window:
                 roi_size = (96, 96, 96)
                 sw_batch_size = 4
-
                 out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False)
             else:
                 out = net(inp)
 
-            out = torch.stack([post_pred(i) for i in decollate_batch(out)])
-            label = torch.stack([post_label(i) for i in decollate_batch(label)])
+                if args.save_nifti:
+                    save_nifti(inp, device, out, args, post_pred, post_label, label)
+                out = torch.stack([post_pred(i) for i in decollate_batch(out)])
+                label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
-            dice = compute_meandice(out, label, include_background=True)
-            dice_F1 = compute_meandice(out, label, include_background=False)
 
-            dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
-            dices_bg += list(dice.cpu().detach().numpy().flatten())
+            if args.save_eval_img and i == 0:
+                label = torch.Tensor(label.cpu().detach().numpy()).to(device)
+                if args.separate_outputs:
+                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PRED CT', torch.cat([out_ct[0][1:] * 255]), 128)
+                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PET', torch.cat([inp[0][1:] * 255]), 128)
+                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PRED PET', torch.cat([out_pet[0][1:] * 255]), 128)
+                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PRED FUSED', torch.cat([out_fused[0][1:] * 255]), 128)
+                else:
+                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'GT', torch.cat([label[0][1:] * 255]), 128)
+                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PRED', torch.cat([out[0][1:] * 255]), 128)
+
+            if not args.separate_outputs:
+                dice = compute_meandice(out, label, include_background=True)
+                dice_F1 = compute_meandice(out, label, include_background=False)
+
+                dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
+                dices_bg += list(dice.cpu().detach().numpy().flatten())
 
     f1_dice = np.mean(np.array(dices_fg))
     bg_dice = np.mean(np.array(dices_bg))
@@ -124,9 +144,15 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
                 sw_batch_size = 4
                 mask_out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False)
             else:
+                if args.save_nifti:
+                    save_nifti(inp, device, mask_out, args, post_pred, post_label, label)
                 mask_out = net(inp)
             recon_out = mask_out[:, :1]
             rec_loss.append(torch.mean(torch.abs(inp[:, :1] - recon_out)).cpu().detach().numpy())
+
+            if args.save_eval_img:
+                cv2.imwrite(f'{args.log_dir}/recon.png', recon_out[0,:,:,:,64].cpu().detach().numpy().transpose(1 , 2, 0) * 255)
+                cv2.imwrite(f'{args.log_dir}/ct.png', inp[0,:1,:,:,64].cpu().detach().numpy().transpose(1, 2, 0) * 255)
 
 
             mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
@@ -149,6 +175,45 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
 
     net.train()
     return dice_F1, dice_bg
+
+def reconstruction(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=None, writer=None, trainer=None):
+
+    if not args.sliding_window:
+        evaluator.run(val_loader)
+
+    rec_loss = []
+    net.eval()
+    with torch.no_grad():
+        for i, val_data in tqdm(enumerate(val_loader)):
+            (inp, label) = prepare_batch(val_data, args, device=device, input_mod=input_mod)
+
+            if args.sliding_window:
+                roi_size = (96, 96, 96)
+                sw_batch_size = 4
+                mask_out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False)
+            else:
+                mask_out = net(inp)
+            recon_out = mask_out
+            rec_loss.append(torch.mean(torch.abs(inp - recon_out)).cpu().detach().numpy())
+
+            if args.save_eval_img:
+                cv2.imwrite(f'{args.log_dir}/recon_{trainer.state.epoch}_{args.evaluate_only}.png', recon_out[0,:,:,:,64].cpu().detach().numpy().transpose(1 , 2, 0) * 255)
+                cv2.imwrite(f'{args.log_dir}/ct.png', inp[0,:,:,:,64].cpu().detach().numpy().transpose(1, 2, 0) * 255)
+
+            if args.save_eval_img and i == 0:
+
+                if args.save_nifti:
+                    save_nifti(inp, device, out, args, post_pred, post_label, label)
+
+    r_loss = np.mean(np.array(rec_loss))
+
+    print('Mean reconstruction loss:', r_loss)
+    writer.add_scalar('Reconstruction Loss:', r_loss, trainer.state.iteration)
+
+    net.train()
+    return r_loss
+
+
 def segmentation_late_fusion(evaluator, val_loader, net, net_2, args, post_pred, post_label, device, input_mod=None):
     # Assume input_mod_1 = ct_vol, input_mod_2 = ct_pet_vol
     dices_fg, dices_bg = [], []
@@ -205,3 +270,68 @@ def segmentation_late_fusion(evaluator, val_loader, net, net_2, args, post_pred,
 # not implemented
 def segmentation_classification():
     pass
+
+# Utility for save_nifti()
+def convert_output(out, device, spatial_size, add_channel):
+    out = torch.Tensor(out.cpu().detach().numpy()).to(device)
+    out = nnf.interpolate(add_channel(add_channel(out[0, 1])), size=spatial_size)[0][0]
+    return out
+
+# Utility for save_nifti()
+def write_nifti(names, data, affine, args):
+    for i, im in enumerate(data):
+        ni_img = nib.Nifti1Image(im.cpu().detach().numpy(), affine=affine)
+        ni_img.header.get_xyzt_units()
+        ni_img.to_filename(f'{args.log_dir}/{names[i]}.nii.gz')
+
+def save_nifti(inp, device, out, args, post_pred, post_label, label):
+    add_channel = AddChannel()
+    affine = np.eye(4)
+    affine[0][0] = -1
+    spatial_size = (400, 400, 384)
+    if args.separate_outputs:
+        (out_ct, out_pet) = out
+        out_fused = torch.stack([post_pred(i) for i in decollate_batch(out_ct * args.mirror_th + out_pet * (1.0 - args.mirror_th))])
+
+        out_ct = torch.stack([post_pred(i) for i in decollate_batch(out_ct)])
+        out_pet = torch.stack([post_pred(i) for i in decollate_batch(out_pet)])
+        label = torch.stack([post_label(i) for i in decollate_batch(label)])
+
+        inp_ct = torch.Tensor(inp.cpu().detach().numpy()).to(device)
+        inp_ct = nnf.interpolate(add_channel(add_channel(inp_ct[0][0])), size=spatial_size)[0][0]
+
+        inp_pet = convert_output(inp, device, spatial_size, add_channel)
+
+        out_ct = convert_output(out_ct, device, spatial_size, add_channel)
+        out_pet = convert_output(out_pet, device, spatial_size, add_channel)
+        out_label = convert_output(label, device, spatial_size, add_channel)
+        out_fused = convert_output(out_fused, device, spatial_size, add_channel)
+
+        names = ['ct', 'pet', 'ct_pred', 'pet_pred', 'label', 'fused_pred']
+        data = [inp_ct, inp_pet, out_ct, out_pet, out_label, out_fused]
+        write_nifti(names, data, affine, args)
+
+    elif args.single_mod is not None or args.task == 'reconstruction':
+        inp_ct = torch.Tensor(inp.cpu().detach().numpy()).to(device)
+        inp_ct = nnf.interpolate(add_channel(add_channel(inp_ct[0][0])), size=spatial_size)[0][0]
+
+        out = convert_output(out, device, spatial_size, add_channel)
+        out_label = convert_output(label, device, spatial_size, add_channel)
+
+        names = ['inp', 'ct_pred', 'label']
+        data = [inp_ct, out, out_label]
+        write_nifti(names, data, affine, args)
+
+    else: # Early fusion
+        inp_ct = torch.Tensor(inp.cpu().detach().numpy()).to(device)
+        inp_ct = nnf.interpolate(add_channel(add_channel(inp_ct[0][0])), size=spatial_size)[0][0]
+
+        inp_pet = convert_output(inp, device, spatial_size, add_channel)
+        out = convert_output(out, device, spatial_size, add_channel)
+        out_label = convert_output(label, device, spatial_size, add_channel)
+
+        names = ['inp_ct', 'inp_pet', 'pred', 'label']
+        data = [inp_ct, inp_pet, out, out_label]
+        write_nifti(names, data, affine, args)
+
+    exit()

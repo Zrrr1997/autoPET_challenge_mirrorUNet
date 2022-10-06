@@ -193,6 +193,7 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
 
 
     print('Training samples:', len(train_files), ' Validation samples:', len(val_files))
+
     return train_files, val_files
 
 def prepare_loaders(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-PET-CT-Lesions/', pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_min_pet=0, a_max_pet=15, spatial_size=[400, 400, 128], cache=True, args=None):
@@ -212,6 +213,8 @@ def prepare_loaders(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPE
             task_cache_dir = f'./cache/{args.task}/{input_mod}/sliding_window_{args.sliding_window}/with_DA_{args.with_DA}'
             if args.task == 'transference':
                 task_cache_dir = task_cache_dir.replace('transference', 'segmentation') # Segmentation and Transference tasks should share the cache dir
+            if args.task == 'reconstruction':
+                task_cache_dir = task_cache_dir.replace('reconstruction', 'segmentation') # Segmentation and Reconstruction tasks should share the cache dir
             if args.debug:
                 task_cache_dir = os.path.join(task_cache_dir, 'debug')
             print(f"Using cache directory: {task_cache_dir}")

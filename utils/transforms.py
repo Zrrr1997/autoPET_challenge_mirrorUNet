@@ -194,7 +194,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             print(f"[ERROR] Wrong input modality!")
             exit()
     # Normal Segmentation or Transference (without DA)
-    elif (args.task in ['segmentation', 'transference'] or args.class_backbone == 'Ensemble') and not args.with_DA:
+    elif (args.task in ['segmentation', 'transference', 'reconstruction'] or args.class_backbone == 'Ensemble') and not args.with_DA:
         if args.single_mod is None: # input_mod == ct_pet_vol
             train_transforms = Compose(
                 [
@@ -246,7 +246,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             print(f"[ERROR] Wrong input modality!")
             exit()
     # Normal Segmentation or Transference (with DA)
-    elif (args.task in ['segmentation', 'transference'] or args.class_backbone == 'Ensemble') and args.with_DA:
+    elif (args.task in ['segmentation', 'transference', 'reconstruction'] or args.class_backbone == 'Ensemble') and args.with_DA:
         print("Using transforms WITH data augmentation.")
         if args.single_mod is None: # input_mod == ct_pet_vol
             train_transforms = Compose(
@@ -352,7 +352,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
     ### VALIDATION ###
     ##################
     # Normal Segmentation or Transference
-    if (args.task in ['segmentation', 'transference'] or args.class_backbone == 'Ensemble') and not args.sliding_window:
+    if (args.task in ['segmentation', 'transference', 'reconstruction'] or args.class_backbone == 'Ensemble') and not args.sliding_window:
         if args.single_mod is None: # input_mod == ct_pet_vol
             val_transforms= Compose(
                 [

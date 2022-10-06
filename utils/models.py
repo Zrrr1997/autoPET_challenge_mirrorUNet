@@ -93,7 +93,12 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
             print(f"Using an ensemble of classifiers")
 
 
-
+    if args.load_weights is not None and args.load_weights_second_model is not None and args.pretrained: # initialize the ct and pet branches with pretrained weights
+        print('-------\n')
+        print(f'Loading weights from {args.load_weights} with PRE-TRAINED CT and PET backbones.')
+        print('-------')
+        net.load_pretrained_transference(args.load_weights, args.load_weights_second_model)
+        return net, net_2
 
     if args.load_weights is not None:
         print('-------\n')
@@ -105,15 +110,16 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
             print(f'Loading weights from {args.load_weights_second_model}')
             print('-------')
             net_2.load_pretrained_unequal(args.load_weights_second_model) # ignore layers with size mismatch - needed when changing output channels
-    if args.load_best_val_weights is not None:
-        paths = sorted([el for el in os.listdir(args.load_best_val_weights) if 'best' in el])
+    elif args.load_best_val_weights is not None:
+        paths = sorted([el for el in os.listdir(args.load_best_val_weights) if 'best' in el and '.pth' in el])
+
         if args.load_keyword is not None:
-            paths = sorted([el for el in os.listdir(args.load_best_val_weights) if args.load_keyword in el])
+            paths = sorted([el for el in os.listdir(args.load_best_val_weights) if args.load_keyword in el and '.pth' in el])
         path = os.path.join(args.load_best_val_weights, paths[-1])
         print('-------\n')
         print(f'Loading weights from {path}')
         print('-------')
-        
+
         net.load_pretrained_unequal(path) # ignore layers with size mismatch - needed when changing output channels
 
 

@@ -212,6 +212,8 @@ class Mirror_UNet(nn.Module):
                 upc = c + channels[1]
 
                 down = self._get_down_layer(inc, c, s, is_top)
+                #print(inc, c, upc, outc)
+                #exit()
 
                 up_1 = self._get_up_layer(upc, outc, s, is_top)  # create layer in upsampling path
                 up_2 = self._get_up_layer(upc, outc, s, is_top)  # create layer in upsampling path
@@ -340,12 +342,15 @@ class Mirror_UNet(nn.Module):
         # assume one channel for each modality
         x_1 = self.path_1(x[:,0].unsqueeze(dim=1))  # CT
         x_2 = self.path_2(x[:,1].unsqueeze(dim=1))  # PET
+        if self.args.separate_outputs:
+            return x_1, x_2
 
         if self.task == 'segmentation':
             if self.args.learnable_th:
                 out = torch.clamp(self.learnable_th, 0, 1) * x_1 + (1 - torch.clamp(self.learnable_th, 0, 1)) * x_2
             else:
                 out = self.args.mirror_th * x_1 + (1 - self.args.mirror_th) * x_2 # For decision fusion segmentation (exp_1)
+
             return out
         elif self.task == 'reconstruction' or self.task == 'transference':
             x_12 = torch.cat((x_1, x_2), dim=1)
@@ -385,3 +390,49 @@ class Mirror_UNet(nn.Module):
 
         else:
             raise ValueError(f"Weight file {file} does not exist")
+
+    def load_pretrained_transference(self, file_1, file_2):
+
+
+        for i, file in enumerate([file_1, file_2]):
+            # load the weight file and copy the parameters
+            if os.path.isfile(file):
+                if i == 0:
+                    print('Loading pre-trained weight file for CT task.')
+                else:
+                    print('Loading pre-trained weight file for PET task.')
+                if 'net' in torch.load(file).keys():
+                    weight_dict = torch.load(file)["net"]
+                else:
+                    weight_dict = torch.load(file)
+
+                model_dict = self.state_dict()
+                n_params = 0
+                n_not_found = 0
+                n_mismatch = 0
+                for param_name, param in weight_dict.items():
+
+                    name = param_name[6:] # ommit model. prefix
+
+                    if (f'path_{i+1}.' + name) in model_dict:
+
+
+                        if param.size() == model_dict[(f'path_{i+1}.' + name)].size():
+
+                            model_dict[(f'path_{i+1}.' + name)].copy_(param)
+                            #model_dict[name] = param
+                        else:
+                            print(param.size(), model_dict[(f'path_{i+1}.' + name)].size())
+                            print(
+                                f' WARNING parameter size not equal. Skipping weight loading for: {name} '
+                                f'File: {param.size()} Model: {model_dict[name].size()}')
+                            n_mismatch += 1
+                    else:
+                        print(f' WARNING parameter from weight file not found in model. Skipping {name}')
+                        n_not_found += 1
+                    n_params += 1
+                print('Loaded pre-trained parameters from file.')
+                print('Not found [%]', round(100 * n_not_found / n_params, 2), 'Mismatch [%]', round(100 * n_mismatch / n_params, 2))
+
+            else:
+                raise ValueError(f"Weight file {file} does not exist")

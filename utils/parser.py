@@ -38,6 +38,8 @@ def prepare_parser(parser):
                          help='Use sliding window inference.')
     parser.add_argument('--save_eval_img', default=False, action='store_true',
                          help='Save an image during evaluation.')
+    parser.add_argument('--save_nifti', default=False, action='store_true',
+                         help='Save nifti files of the output and ground truth.')
 
     # Dataset
     parser.add_argument('--with_negatives', default=False, action='store_true',
@@ -60,6 +62,8 @@ def prepare_parser(parser):
                          help='Fusion by averaging the logits.')
     parser.add_argument('--decision_fusion', default=False, action='store_true',
                          help='Fusion by (weak) averaging the predictions.')
+    parser.add_argument('--separate_outputs', default=False, action='store_true',
+                         help='Return separate outputs for the two Mirror UNet arms.')
 
 
 
@@ -67,7 +71,7 @@ def prepare_parser(parser):
     parser.add_argument('--load_weights', type=str, default=None,
                          help='Load model from this directory.')
     parser.add_argument('--load_weights_second_model', type=str, default=None,
-                         help='Load model from this directory.')
+                         help='Load second model from this directory.')
     parser.add_argument('--load_best_val_weights', type=str, default=None,
                          help='Load best validation model from the given directory.')
     parser.add_argument('--load_keyword', type=str, default=None,
@@ -92,11 +96,12 @@ def prepare_parser(parser):
                         help='Weight for CT-modalitiy in the late fusion for mirror-UNet (experiment 1).')
     parser.add_argument('--learnable_th', default=False, action='store_true',
                         help='Make the fusion threshold learnable for mirror-UNet in the late fusion for mirror-UNet (experiment 1).')
-    parser.add_argument('--lambda_rec', type=float, default=1.0,
+    parser.add_argument('--lambda_rec', type=float, default=1e-3,
                         help='Weight for the reconstruction loss in the transference (experiment 2).')
-    parser.add_argument('--lambda_seg', type=float, default=1.0,
+    parser.add_argument('--lambda_seg', type=float, default=0.5,
                         help='Weight for the segmentation loss in the transference (experiment 2).')
-
+    parser.add_argument('--pretrained', default=False, action='store_true',
+                        help='True if loading pre-trained weights for initialization (required for tranference pre-initialization).')
 
 
     # Utils

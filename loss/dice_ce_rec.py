@@ -32,8 +32,8 @@ class DiceCE_Rec_Loss(_Loss):
         smooth_dr: float = 1e-5,
         batch: bool = False,
         ce_weight: Optional[torch.Tensor] = None,
-        lambda_dice: float = 1.0,
-        lambda_ce: float = 1.0,
+        lambda_dice: float = 0.5,
+        lambda_ce: float = 0.5,
         lambda_rec: float = 1.0,
     ) -> None:
         """
@@ -150,6 +150,7 @@ class DiceCE_Rec_Loss(_Loss):
         dice_loss = self.dice(input, target)
         ce_loss = self.ce(input, target)
         rec_loss = self.rec_loss(input_rec, target_rec)
+
         total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_ce * ce_loss + self.lambda_rec * rec_loss
 
         return total_loss

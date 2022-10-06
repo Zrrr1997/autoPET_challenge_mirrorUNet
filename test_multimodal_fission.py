@@ -80,6 +80,7 @@ if __name__ == "__main__":
     train_loader, val_loader, train_files, val_files = prepare_loaders(spatial_size=spatial_size, args=args)
 
 
+
     writer = SummaryWriter(log_dir = args.log_dir)
 
     # Write the current configuration to file
@@ -138,6 +139,8 @@ if __name__ == "__main__":
     def default_score_fn(engine):
         if args.task == 'classification':
             score = engine.state.metrics['Accuracy']
+        elif args.task == 'reconstruction':
+            score = engine.state.metrics['MSE']
         else: # Segmentation
             score = engine.state.metrics['Mean_Dice']
         return score
@@ -186,7 +189,7 @@ if __name__ == "__main__":
         output_transform=lambda x, y, y_pred: ([post_pred(i) for i in decollate_batch(y_pred)], [post_label(i) for i in decollate_batch(y)]),
         prepare_batch=prepare_batch,
     )
-    if args.task in ['classification', 'segmentation', 'transference']:
+    if args.task in ['classification', 'segmentation', 'transference', 'reconstruction']:
         checkpoint_handler_best_val = ModelCheckpoint(
             args.ckpt_dir, "net_best_val", n_saved=1, require_empty=False, score_function=default_score_fn
         )
@@ -255,6 +258,10 @@ if __name__ == "__main__":
                     best_bg_dice = bg_dice
                     with open(os.path.join(args.ckpt_dir, f'best_bg_dice.txt'), 'a+') as f:
                         f.write(str(best_bg_dice) + '\n')
+
+        if args.task == 'reconstruction':
+            r_loss = reconstruction(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)
+
         return
 
     # Stats event handler to print validation stats via evaluator
@@ -273,9 +280,9 @@ if __name__ == "__main__":
     )  # fetch global iteration number from trainer
     val_tensorboard_stats_handler.attach(evaluator)
 
+
     if not args.evaluate_only:
         train_epochs = args.epochs
-
         state = trainer.run(train_loader, train_epochs)
     else:
 
