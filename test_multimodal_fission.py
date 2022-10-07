@@ -9,6 +9,10 @@ import argparse
 # Torch
 import torch
 from torch.utils.tensorboard import SummaryWriter
+from torchinfo import summary
+from torchviz import make_dot
+
+
 
 # IGNITE
 import ignite
@@ -73,7 +77,7 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{args.gpu}") if args.gpu >= 0 else torch.device("cpu")
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
-
+    #summary(net, input_size=(args.batch_size, 2, 400, 400, 128))
 
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128]
@@ -89,6 +93,11 @@ if __name__ == "__main__":
 
     check_data = first(val_loader)
     print('Input shape check:', check_data[input_mod].shape)
+
+    #yhat = net(check_data['ct_pet_vol'].to(device))
+    #make_dot(yhat, params=dict(list(net.named_parameters()))).render("mirrorUNet_graph", format="png")
+    #exit()
+
 
     check_data_shape(val_loader, input_mod, args)
 
@@ -126,7 +135,13 @@ if __name__ == "__main__":
         elif task == 'classification' and args.proj_dim is not None: # classification with mask, with 1 channel
             return _prepare_batch((inp, batch["class_label"].unsqueeze(dim=1).float()), device, non_blocking)
         elif task == 'transference':
-            ct_vol = inp[:, :1]
+            if args.transference_switch:
+                ct_vol = inp[:, 1:]
+                inp[:, 0] *= 0
+            else:
+                ct_vol = inp[:, :1]
+
+
             return _prepare_batch((inp, torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
             # may be more efficient if only ct_pet_vol is loaded into the GPU VRAM
         else:

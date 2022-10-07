@@ -102,6 +102,10 @@ def prepare_parser(parser):
                         help='Weight for the segmentation loss in the transference (experiment 2).')
     parser.add_argument('--pretrained', default=False, action='store_true',
                         help='True if loading pre-trained weights for initialization (required for tranference pre-initialization).')
+    parser.add_argument('--transference_switch', default=False, action='store_true',
+                        help='Swap reconstruction of CT with PET.')
+    parser.add_argument('--cut_ct_skip', default=False, action='store_true',
+                        help='Omit the ct skip connections in Mirror UNet.')
 
 
     # Utils

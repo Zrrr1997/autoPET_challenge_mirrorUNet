@@ -1,5 +1,5 @@
 # Network architectures
-from models.mirror_UNet import Mirror_UNet
+from models.mirror_UNet_iterative import Mirror_UNet
 from models.UNet import UNet
 from models.resnet import ResNet
 from models.efficient_net import EfficientNet
@@ -39,17 +39,32 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
         print(f"Using UNet with early fusion == {args.early_fusion}")
     elif args.task != 'classification' and args.class_backbone != 'Ensemble': # Reconstruction, Segmentation or Transference
         in_channels = 2 if args.mask_attention else 1
-        net = Mirror_UNet(
-            spatial_dims=3,
-            in_channels=1, # must be left at 1, this refers to the #c of each individual branch (PET or CT)
-            out_channels=out_channels,
-            channels=(16, 32, 64, 128, 256),
-            strides=(2, 2, 2, 2),
-            num_res_units=2,
-            norm=Norm.BATCH,
-            task=args.task,
-            args=args
-        ).to(device)
+        if args.cut_ct_skip:
+            net = Mirror_UNet(
+                spatial_dims=3,
+                in_channels=1, # must be left at 1, this refers to the #c of each individual branch (PET or CT)
+                out_channels=out_channels,
+                channels=(16, 32, 64, 128),
+                strides=(2, 2, 2),
+                num_res_units=2,
+                norm=Norm.BATCH,
+                task=args.task,
+                args=args
+            ).to(device)
+        else:
+            net = Mirror_UNet(
+                spatial_dims=3,
+                in_channels=1, # must be left at 1, this refers to the #c of each individual branch (PET or CT)
+                out_channels=out_channels,
+                channels=(16, 32, 64, 128, 256),
+                strides=(2, 2, 2, 2),
+                num_res_units=2,
+                norm=Norm.BATCH,
+                task=args.task,
+                args=args
+            ).to(device)
+
+
         print("Using Mirror-UNet")
     else: # classification
         in_channels = 2 if args.mask_attention else 3 # Mask not implemented for 3-channel MIPs (xyz)

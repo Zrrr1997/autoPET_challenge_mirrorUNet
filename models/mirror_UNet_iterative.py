@@ -172,95 +172,43 @@ class Mirror_UNet(nn.Module):
         self.learnable_th = nn.Parameter(torch.tensor(0.5), requires_grad=True)
         print('Initial Threshold:', self.learnable_th)
 
-        def _create_block(
-            inc: int, outc: int, channels: Sequence[int], strides: Sequence[int], is_top: bool
-        ) -> nn.Module:
-            """
-            Builds the UNet structure from the bottom up by recursing down to the bottom block, then creating sequential
-            blocks containing the downsample path, a skip connection around the previous block, and the upsample path.
 
-            Args:
-                inc: number of input channels.
-                outc: number of output channels.
-                channels: sequence of channels. Top block first.
-                strides: convolution stride.
-                is_top: True if this is the top block.
-            """
-            c = channels[0]
-            s = strides[0]
+        self.down_1 = nn.ModuleList()
+        self.up_1 = nn.ModuleList()
 
-            subblock_1: nn.Module
-            subblock_2: nn.Module
+        self.down_2 = nn.ModuleList()
+        self.up_2 = nn.ModuleList()
 
-            if len(channels) > 2:
-                subblock_1, subblock_2 = _create_block(c, c, channels[1:], strides[1:], False)  # continue recursion down
-
-
-                upc = c * 2
-                if args.cut_ct_skip:
-                    upc_ct = c
-                else:
-                    upc_ct = upc
-
-                outc_1 = outc
-                outc_2 = outc
-                if outc == 2 and self.args.task == 'transference':
-                    outc_1 = 1 # CT reconstruction
-                down_1 = self._get_down_layer(inc, c, s, is_top)  # create layer in downsampling path
-                up_1 = self._get_up_layer(upc_ct, outc_1, s, is_top)  # create layer in upsampling path
-                down_2 = self._get_down_layer(inc, c, s, is_top)  # create layer in downsampling path
-                up_2 = self._get_up_layer(upc, outc_2, s, is_top)  # create layer in upsampling path
-
-                if self.args.cut_ct_skip:
-                    return self._get_connection_block_no_skip(down_1, up_1, subblock_1), self._get_connection_block(down_2, up_2, subblock_2)
-                else:
-                    return self._get_connection_block(down_1, up_1, subblock_1), self._get_connection_block(down_2, up_2, subblock_2)
+        device = torch.device(f"cuda:{args.gpu}")
+        channel_list = [self.in_channels] + list(self.channels)
+        out_c_list = [self.out_channels] + list(self.channels)
+        for i, c in enumerate(channel_list):
+            if i > len(self.channels) - 2:
+                break
+            is_top = (i == 0)
+            if i == len(self.channels) - 2:
+                self.common_down = self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device)
             else:
-                # the next layer is the bottom so stop recursion, create the bottom layer as the sublock for this layer
-                subblock_1 = self._get_bottom_layer(c, channels[1])
-                subblock_2 = self._get_bottom_layer(c, channels[1])
+                self.down_1.append(self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device))
+                self.down_2.append(self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device))
 
-                upc = c + channels[1]
-                if args.cut_ct_skip:
-                    upc_ct = 2 * c
-                else:
-                    upc_ct = upc
-
-                down = self._get_down_layer(inc, c, s, is_top)
-
-
-                up_1 = self._get_up_layer(upc_ct, outc, s, is_top)  # create layer in upsampling path
-                up_2 = self._get_up_layer(upc, outc, s, is_top)  # create layer in upsampling path
+            if i == len(self.channels) - 2:
+                up_in = channel_list[i + 1] + channel_list[i + 2]
+            else:
+                up_in = channel_list[i + 1] * 2
+            if args.task == 'transference' and out_c_list[i] == 2:
+                self.up_1.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
+            else:
+                self.up_1.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
+            self.up_2.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
 
 
-                if self.args.cut_ct_skip:
-                    return self._get_connection_block_no_skip(down, up_1, subblock_1), self._get_connection_block(down, up_2, subblock_2)
-                else:
-                    return self._get_connection_block(down, up_1, subblock_1), self._get_connection_block(down, up_2, subblock_2)
-
-        self.path_1, self.path_2 = _create_block(in_channels, out_channels, self.channels, self.strides, True)
-
-    def _get_connection_block(self, down_path: nn.Module, up_path: nn.Module, subblock: nn.Module) -> nn.Module:
-        """
-        Returns the block object defining a layer of the UNet structure including the implementation of the skip
-        between encoding (down) and and decoding (up) sides of the network.
-
-        Args:
-            down_path: encoding half of the layer
-            up_path: decoding half of the layer
-            subblock: block defining the next layer in the network.
-        Returns: block for this layer: `nn.Sequential(down_path, SkipConnection(subblock), up_path)`
-        """
-
-        return nn.Sequential(down_path, SkipConnection(subblock), up_path)
+        self.bottom_layer_1 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
+        self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
 
 
-    def _get_vertical_connection_block(self, down_path: nn.Module, up_path: nn.Module, subblock: nn.Module) -> nn.Module:
 
-        return nn.Sequential(down_path, SkipConnection(subblock), up_path)
-    def _get_connection_block_no_skip(self, down_path: nn.Module, up_path: nn.Module, subblock: nn.Module) -> nn.Module:
 
-        return nn.Sequential(down_path, subblock, up_path)
 
     def _get_down_layer(self, in_channels: int, out_channels: int, strides: int, is_top: bool) -> nn.Module:
         """
@@ -365,11 +313,40 @@ class Mirror_UNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # assume one channel for each modality
 
+        x_1 = x[:,0].unsqueeze(dim=1) # CT
 
-        x_1 = self.path_1(x[:,0].unsqueeze(dim=1))  # CT
+        down_x_1 = []
+        for d in self.down_1:
+            x_1 = d(x_1)
+            down_x_1.append(x_1)
+        x_1 = self.common_down(x_1)
+        down_x_1.append(x_1)
 
-        print('SUM TEST', torch.sum(x_1))
-        x_2 = self.path_2(x[:,1].unsqueeze(dim=1))  # PET
+        x_1 = torch.cat([self.bottom_layer_1(x_1), down_x_1[-1]], dim=1)
+        for i, up in enumerate(self.up_1[::-1]):
+            if len(down_x_1) < abs(-i - 2):
+                break
+            x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
+        x_1 = self.up_1[0](x_1)
+
+
+        x_2 = x[:,1].unsqueeze(dim=1) # PET
+
+        down_x_2 = []
+        for d in self.down_2:
+            x_2 = d(x_2)
+            down_x_2.append(x_2)
+        x_2 = self.common_down(x_2)
+        down_x_2.append(x_2)
+
+        x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1]], dim=1)
+        for i, up in enumerate(self.up_2[::-1]):
+            if len(down_x_2) < abs(-i - 2):
+                break
+            x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
+        x_2 = self.up_2[0](x_2)
+
+
         if self.args.separate_outputs:
             return x_1, x_2
 

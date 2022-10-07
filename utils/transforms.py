@@ -57,7 +57,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             ]
         )
     # Sliding Window Segmentation or Transference without DA
-    elif args.task in ['segmentation', 'transference'] and args.sliding_window and not args.with_DA:
+    elif args.task in ['segmentation', 'transference', 'reconstruction'] and args.sliding_window and not args.with_DA:
         if args.single_mod is None: # ct_pet_vol
             train_transforms = Compose(
                 [
@@ -410,7 +410,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
         else:
             print(f"[ERROR] Wrong input modality!")
             exit()
-    elif (args.task in ['segmentation', 'transference'] or args.class_backbone == 'Ensemble') and args.sliding_window:
+    elif (args.task in ['segmentation', 'transference', 'reconstruction'] or args.class_backbone == 'Ensemble') and args.sliding_window:
         if args.single_mod is None: # input_mod == ct_pet_vol
             val_transforms= Compose(
                 [
@@ -430,6 +430,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             if args.task == 'transference':
                 print(f'[ERROR] Cannot do transference with only one modality {args.single_mod}!')
                 exit()
+
             val_transforms= Compose(
                 [
                     LoadImaged(keys=["ct_vol", "seg"]),

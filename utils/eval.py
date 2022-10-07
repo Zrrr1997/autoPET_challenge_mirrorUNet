@@ -42,7 +42,11 @@ def prepare_batch(batch, args, device=None, non_blocking=False, input_mod=None):
     elif task == 'classification' and args.proj_dim is not None: # normal classification
         return _prepare_batch((inp, batch["class_label"].unsqueeze(dim=1).float()), device, non_blocking)
     elif task == 'transference':
-        ct_vol = inp[:, :1]
+        if args.transference_switch:
+            ct_vol = inp[:, 1:]
+            inp[:, 0] *= 0
+        else:
+            ct_vol = inp[:, :1]
         return _prepare_batch((inp, torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
         #return _prepare_batch((inp, torch.cat([batch['ct_vol'], batch['seg']], dim=1)), device, non_blocking)
     else:
@@ -74,7 +78,7 @@ def classification(evaluator, val_loader, net, args, device, input_mod=None):
     return
 
 def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=None, trainer=None, writer=None):
-    if not args.sliding_window and False: # TODO Remove False
+    if not args.sliding_window and not args.save_nifti:
         evaluator.run(val_loader)
     dices_bg, dices_fg = [], []
     net.eval()
@@ -91,10 +95,10 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
             else:
                 out = net(inp)
 
-                if args.save_nifti:
-                    save_nifti(inp, device, out, args, post_pred, post_label, label)
-                out = torch.stack([post_pred(i) for i in decollate_batch(out)])
-                label = torch.stack([post_label(i) for i in decollate_batch(label)])
+            if args.save_nifti:
+                save_nifti(inp, device, out, args, post_pred, post_label, label)
+            out = torch.stack([post_pred(i) for i in decollate_batch(out)])
+            label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
 
             if args.save_eval_img and i == 0:
@@ -130,7 +134,7 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
 
 def transference(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=None, writer=None, trainer=None):
 
-    if not args.sliding_window:
+    if not args.sliding_window and not args.save_nifti:
         evaluator.run(val_loader)
 
     dices_fg, dices_bg, rec_loss = [], [], []
@@ -139,20 +143,26 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
         for i, val_data in tqdm(enumerate(val_loader)):
             (inp, label) = prepare_batch(val_data, args, device=device, input_mod=input_mod)
 
+
             if args.sliding_window:
                 roi_size = (96, 96, 96)
                 sw_batch_size = 4
                 mask_out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False)
             else:
-                if args.save_nifti:
-                    save_nifti(inp, device, mask_out, args, post_pred, post_label, label)
                 mask_out = net(inp)
+            if args.save_nifti:
+                save_nifti(inp, device, mask_out, args, post_pred, post_label, label)
             recon_out = mask_out[:, :1]
-            rec_loss.append(torch.mean(torch.abs(inp[:, :1] - recon_out)).cpu().detach().numpy())
+            if args.transference_switch:
+                rec_loss.append(torch.mean(torch.abs(inp[:, 1:] - recon_out)).cpu().detach().numpy())
+            else:
+                rec_loss.append(torch.mean(torch.abs(inp[:, :1] - recon_out)).cpu().detach().numpy())
 
-            if args.save_eval_img:
+            if args.save_eval_img and i == 0:
                 cv2.imwrite(f'{args.log_dir}/recon.png', recon_out[0,:,:,:,64].cpu().detach().numpy().transpose(1 , 2, 0) * 255)
+                cv2.imwrite(f'{args.log_dir}/pet.png', inp[0,1:,:,:,64].cpu().detach().numpy().transpose(1, 2, 0) * 255)
                 cv2.imwrite(f'{args.log_dir}/ct.png', inp[0,:1,:,:,64].cpu().detach().numpy().transpose(1, 2, 0) * 255)
+
 
 
             mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
@@ -178,7 +188,7 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
 
 def reconstruction(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=None, writer=None, trainer=None):
 
-    if not args.sliding_window:
+    if not args.sliding_window and not args.save_nifti:
         evaluator.run(val_loader)
 
     rec_loss = []
@@ -196,14 +206,13 @@ def reconstruction(args, val_loader, net, evaluator, post_pred, post_label, devi
             recon_out = mask_out
             rec_loss.append(torch.mean(torch.abs(inp - recon_out)).cpu().detach().numpy())
 
-            if args.save_eval_img:
+            if args.save_eval_img and i == 0:
                 cv2.imwrite(f'{args.log_dir}/recon_{trainer.state.epoch}_{args.evaluate_only}.png', recon_out[0,:,:,:,64].cpu().detach().numpy().transpose(1 , 2, 0) * 255)
                 cv2.imwrite(f'{args.log_dir}/ct.png', inp[0,:,:,:,64].cpu().detach().numpy().transpose(1, 2, 0) * 255)
 
-            if args.save_eval_img and i == 0:
 
-                if args.save_nifti:
-                    save_nifti(inp, device, out, args, post_pred, post_label, label)
+            if args.save_nifti:
+                save_nifti(inp, device, out, args, post_pred, post_label, label)
 
     r_loss = np.mean(np.array(rec_loss))
 
@@ -291,7 +300,10 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
     spatial_size = (400, 400, 384)
     if args.separate_outputs:
         (out_ct, out_pet) = out
-        out_fused = torch.stack([post_pred(i) for i in decollate_batch(out_ct * args.mirror_th + out_pet * (1.0 - args.mirror_th))])
+        if args.task == 'segmentation':
+            out_fused = torch.stack([post_pred(i) for i in decollate_batch(out_ct * args.mirror_th + out_pet * (1.0 - args.mirror_th))])
+            out_fused = convert_output(out_fused, device, spatial_size, add_channel)
+
 
         out_ct = torch.stack([post_pred(i) for i in decollate_batch(out_ct)])
         out_pet = torch.stack([post_pred(i) for i in decollate_batch(out_pet)])
@@ -305,10 +317,14 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
         out_ct = convert_output(out_ct, device, spatial_size, add_channel)
         out_pet = convert_output(out_pet, device, spatial_size, add_channel)
         out_label = convert_output(label, device, spatial_size, add_channel)
-        out_fused = convert_output(out_fused, device, spatial_size, add_channel)
 
-        names = ['ct', 'pet', 'ct_pred', 'pet_pred', 'label', 'fused_pred']
-        data = [inp_ct, inp_pet, out_ct, out_pet, out_label, out_fused]
+        names = ['ct', 'pet', 'ct_pred', 'pet_pred', 'label']
+        data = [inp_ct, inp_pet, out_ct, out_pet, out_label]
+
+        if args.task == 'segmentation':
+            names.append('fused_pred')
+            data.append(out_fused)
+
         write_nifti(names, data, affine, args)
 
     elif args.single_mod is not None or args.task == 'reconstruction':
@@ -322,16 +338,23 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
         data = [inp_ct, out, out_label]
         write_nifti(names, data, affine, args)
 
-    else: # Early fusion
+    else: # Early fusion or Transference
         inp_ct = torch.Tensor(inp.cpu().detach().numpy()).to(device)
         inp_ct = nnf.interpolate(add_channel(add_channel(inp_ct[0][0])), size=spatial_size)[0][0]
 
         inp_pet = convert_output(inp, device, spatial_size, add_channel)
-        out = convert_output(out, device, spatial_size, add_channel)
+
+
+        out = torch.stack([post_pred(i) for i in decollate_batch(out)])
+        label = torch.stack([post_label(i) for i in decollate_batch(label)])
+
+
+        out_pred = convert_output(out, device, spatial_size, add_channel) # Mask Prediction
+
         out_label = convert_output(label, device, spatial_size, add_channel)
 
         names = ['inp_ct', 'inp_pet', 'pred', 'label']
-        data = [inp_ct, inp_pet, out, out_label]
+        data = [inp_ct, inp_pet, out_pred, out_label]
         write_nifti(names, data, affine, args)
 
     exit()

@@ -175,7 +175,7 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
 
     if args.debug:
         train_files = train_files[:4]
-        val_files = val_files[:4] # test overfitting with small number of samples
+        val_files = train_files[:4] # test overfitting with small number of samples
 
     # do not validate when using sliding window...
     #if args.sliding_window and not args.evaluate_only and args.task != 'classification':
@@ -219,7 +219,10 @@ def prepare_loaders(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPE
                 task_cache_dir = os.path.join(task_cache_dir, 'debug')
             print(f"Using cache directory: {task_cache_dir}")
             train_ds = PersistentDataset(data=train_files, transform=train_transforms, cache_dir=os.path.join(task_cache_dir, 'train'))
-            val_ds = PersistentDataset(data=val_files, transform=val_transforms, cache_dir=os.path.join(task_cache_dir, 'val'))
+            if args.debug:
+                val_ds = PersistentDataset(data=val_files, transform=val_transforms, cache_dir=os.path.join(task_cache_dir, 'train'))
+            else:
+                val_ds = PersistentDataset(data=val_files, transform=val_transforms, cache_dir=os.path.join(task_cache_dir, 'val'))
     else:
         train_ds = Dataset(data=train_files, transform=train_transforms)
         val_ds = Dataset(data=val_files, transform=val_transforms)
