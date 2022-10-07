@@ -106,6 +106,8 @@ def prepare_parser(parser):
                         help='Swap reconstruction of CT with PET.')
     parser.add_argument('--cut_ct_skip', default=False, action='store_true',
                         help='Omit the ct skip connections in Mirror UNet.')
+    parser.add_argument('--vertical_skip', default=False, action='store_true',
+                        help='Add vertical skip connections (CT --> PET) in Mirror UNet.')
 
 
     # Utils

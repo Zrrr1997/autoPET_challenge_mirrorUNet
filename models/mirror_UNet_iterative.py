@@ -200,7 +200,11 @@ class Mirror_UNet(nn.Module):
                 self.up_1.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
             else:
                 self.up_1.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
-            self.up_2.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
+            if args.vertical_skip:
+                factor = 2
+            else:
+                factor = 1
+            self.up_2.append(self._get_up_layer(factor * up_in, out_c_list[i], 2, is_top).to(device))
 
 
         self.bottom_layer_1 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
@@ -322,10 +326,14 @@ class Mirror_UNet(nn.Module):
         x_1 = self.common_down(x_1)
         down_x_1.append(x_1)
 
-        x_1 = torch.cat([self.bottom_layer_1(x_1), down_x_1[-1]], dim=1)
+        bottom_x_1 = self.bottom_layer_1(x_1)
+        x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
+        up_x_1 = []
         for i, up in enumerate(self.up_1[::-1]):
             if len(down_x_1) < abs(-i - 2):
                 break
+            if args.vertical_skip:
+                up_x_1.append(up(x_1))
             x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
         x_1 = self.up_1[0](x_1)
 
@@ -339,11 +347,17 @@ class Mirror_UNet(nn.Module):
         x_2 = self.common_down(x_2)
         down_x_2.append(x_2)
 
-        x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1]], dim=1)
+        if self.args.vertical_skip:
+            x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1], bottom_x_1, down_x_1[-1]], dim=1)
+        else:
+            x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1]], dim=1)
         for i, up in enumerate(self.up_2[::-1]):
             if len(down_x_2) < abs(-i - 2):
                 break
-            x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
+            if self.args.vertical_skip:
+                x_2 = torch.cat([up(x_2), down_x_2[-i - 2], up_x_1[i], down_x_1[-i - 1]], dim=1)
+            else:
+                x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
         x_2 = self.up_2[0](x_2)
 
 
