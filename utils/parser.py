@@ -110,6 +110,8 @@ def prepare_parser(parser):
                         help='Add vertical skip connections (CT --> PET) in Mirror UNet.')
     parser.add_argument('--common_bottom', default=False, action='store_true',
                         help='Common bottom layer instead of common DOWN layer for Mirror UNet.')
+    parser.add_argument('--attention_UNet', default=False, action='store_true',
+                        help='Use Attention UNet as a backbone.')
 
 
     # Utils

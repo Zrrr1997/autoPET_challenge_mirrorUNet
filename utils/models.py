@@ -1,6 +1,7 @@
 # Network architectures
 from models.mirror_UNet_iterative import Mirror_UNet
 from models.UNet import UNet
+from models.attention_UNet import AttentionUnet
 from models.resnet import ResNet
 from models.efficient_net import EfficientNet
 from models.ensemble import Ensemble
@@ -15,16 +16,25 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
     if (args.single_mod is not None or args.early_fusion) and args.task != 'classification' and args.class_backbone != 'Ensemble':
         in_channels = 2 if args.early_fusion and args.load_weights_second_model is None else 1
         in_channels = in_channels + 1 if args.mask_attention else in_channels
-        net = UNet(
-            spatial_dims=3,
-            in_channels=in_channels,
-            out_channels=out_channels, # softmax output (1 channel per class, i.e. Fg/Bg), 1 channel only for reconstruction (SSL pre-training)
-            channels=(16, 32, 64, 128, 256),
-            strides=(2, 2, 2, 2),
-            num_res_units=2,
-            norm=Norm.BATCH,
-            device=device
-        ).to(device)
+        if args.attention_UNet: # TODO: Implement for MirrorUNet if the backbone works at all
+            net = AttentionUnet(
+                spatial_dims=3,
+                in_channels=in_channels,
+                out_channels=out_channels,
+                channels=(16, 32, 64, 128, 256),
+                strides=(2,2,2,2),
+            ).to(device)
+        else:
+            net = UNet(
+                spatial_dims=3,
+                in_channels=in_channels,
+                out_channels=out_channels, # softmax output (1 channel per class, i.e. Fg/Bg), 1 channel only for reconstruction (SSL pre-training)
+                channels=(16, 32, 64, 128, 256),
+                strides=(2, 2, 2, 2),
+                num_res_units=2,
+                norm=Norm.BATCH,
+                device=device
+            ).to(device)
         if args.load_weights_second_model:
             net_2 = UNet(
                 spatial_dims=3,
