@@ -108,6 +108,8 @@ def prepare_parser(parser):
                         help='Omit the ct skip connections in Mirror UNet.')
     parser.add_argument('--vertical_skip', default=False, action='store_true',
                         help='Add vertical skip connections (CT --> PET) in Mirror UNet.')
+    parser.add_argument('--common_bottom', default=False, action='store_true',
+                        help='Common bottom layer instead of common DOWN layer for Mirror UNet.')
 
 
     # Utils

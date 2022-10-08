@@ -186,7 +186,7 @@ class Mirror_UNet(nn.Module):
             if i > len(self.channels) - 2:
                 break
             is_top = (i == 0)
-            if i == len(self.channels) - 2:
+            if i == len(self.channels) - 2 and not args.common_bottom:
                 self.common_down = self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device)
             else:
                 self.down_1.append(self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device))
@@ -196,19 +196,21 @@ class Mirror_UNet(nn.Module):
                 up_in = channel_list[i + 1] + channel_list[i + 2]
             else:
                 up_in = channel_list[i + 1] * 2
-            if args.task == 'transference' and out_c_list[i] == 2:
+            if self.args.task == 'transference' and out_c_list[i] == 2:
                 self.up_1.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
             else:
                 self.up_1.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
-            if args.vertical_skip:
+            if self.args.vertical_skip:
                 factor = 2
             else:
                 factor = 1
             self.up_2.append(self._get_up_layer(factor * up_in, out_c_list[i], 2, is_top).to(device))
 
-
-        self.bottom_layer_1 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
-        self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
+        if not args.common_bottom:
+            self.bottom_layer_1 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
+            self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
+        else:
+            self.bottom_layer = self._get_bottom_layer(self.channels[-2], self.channels[-1])
 
 
 
@@ -323,16 +325,19 @@ class Mirror_UNet(nn.Module):
         for d in self.down_1:
             x_1 = d(x_1)
             down_x_1.append(x_1)
-        x_1 = self.common_down(x_1)
-        down_x_1.append(x_1)
+        if not args.common_bottom:
+            x_1 = self.common_down(x_1)
+            down_x_1.append(x_1)
 
-        bottom_x_1 = self.bottom_layer_1(x_1)
+            bottom_x_1 = self.bottom_layer_1(x_1)
+        else:
+            bottom_x_1 = self.bottom_layer(x_1)
         x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
         up_x_1 = []
         for i, up in enumerate(self.up_1[::-1]):
             if len(down_x_1) < abs(-i - 2):
                 break
-            if args.vertical_skip:
+            if self.args.vertical_skip:
                 up_x_1.append(up(x_1))
             x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
         x_1 = self.up_1[0](x_1)
@@ -344,13 +349,23 @@ class Mirror_UNet(nn.Module):
         for d in self.down_2:
             x_2 = d(x_2)
             down_x_2.append(x_2)
-        x_2 = self.common_down(x_2)
-        down_x_2.append(x_2)
+        if not args.common_bottom:
+            x_2 = self.common_down(x_2)
+            down_x_2.append(x_2)
 
         if self.args.vertical_skip:
-            x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1], bottom_x_1, down_x_1[-1]], dim=1)
+            if not args.common_bottom:
+                x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1], bottom_x_1, down_x_1[-1]], dim=1)
+            else:
+                x_2 = torch.cat([self.bottom_layer(x_2), down_x_2[-1], bottom_x_1, down_x_1[-1]], dim=1)
+
+            print('x_2.shape', x_2.shape)
         else:
-            x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1]], dim=1)
+            if not args.common_bottom:
+                x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1]], dim=1)
+            else:
+                x_2 = torch.cat([self.bottom_layer(x_2), down_x_2[-1]], dim=1)
+
         for i, up in enumerate(self.up_2[::-1]):
             if len(down_x_2) < abs(-i - 2):
                 break
