@@ -206,7 +206,7 @@ class Mirror_UNet(nn.Module):
                 factor = 1
             self.up_2.append(self._get_up_layer(factor * up_in, out_c_list[i], 2, is_top).to(device))
 
-        if not args.common_bottom:
+        if not self.args.common_bottom:
             self.bottom_layer_1 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
             self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
         else:
@@ -325,7 +325,7 @@ class Mirror_UNet(nn.Module):
         for d in self.down_1:
             x_1 = d(x_1)
             down_x_1.append(x_1)
-        if not args.common_bottom:
+        if not self.args.common_bottom:
             x_1 = self.common_down(x_1)
             down_x_1.append(x_1)
 
@@ -349,19 +349,19 @@ class Mirror_UNet(nn.Module):
         for d in self.down_2:
             x_2 = d(x_2)
             down_x_2.append(x_2)
-        if not args.common_bottom:
+        if not self.args.common_bottom:
             x_2 = self.common_down(x_2)
             down_x_2.append(x_2)
 
         if self.args.vertical_skip:
-            if not args.common_bottom:
+            if not self.args.common_bottom:
                 x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1], bottom_x_1, down_x_1[-1]], dim=1)
             else:
                 x_2 = torch.cat([self.bottom_layer(x_2), down_x_2[-1], bottom_x_1, down_x_1[-1]], dim=1)
 
             print('x_2.shape', x_2.shape)
         else:
-            if not args.common_bottom:
+            if not self.args.common_bottom:
                 x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1]], dim=1)
             else:
                 x_2 = torch.cat([self.bottom_layer(x_2), down_x_2[-1]], dim=1)
