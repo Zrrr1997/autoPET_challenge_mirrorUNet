@@ -75,19 +75,10 @@ class DiceCE_Rec_Loss(_Loss):
         """
         super().__init__()
         reduction = look_up_option(reduction, DiceCEReduction).value
-        self.dice = DiceLoss(
-            include_background=include_background,
-            to_onehot_y=to_onehot_y,
-            sigmoid=sigmoid,
-            softmax=softmax,
-            other_act=other_act,
-            squared_pred=squared_pred,
-            jaccard=jaccard,
-            reduction=reduction,
-            smooth_nr=smooth_nr,
-            smooth_dr=smooth_dr,
-            batch=batch,
-        )
+
+        self.dice = DiceLoss(to_onehot_y=to_onehot_y, softmax=softmax, include_background=include_background, batch=batch)
+
+
         self.cross_entropy = nn.CrossEntropyLoss(weight=ce_weight, reduction=reduction)
         self.rec_loss = nn.MSELoss()
         if lambda_dice < 0.0:
@@ -133,11 +124,11 @@ class DiceCE_Rec_Loss(_Loss):
             ValueError: When number of channels for target is neither 1 nor the same as input.
 
         """
-        input = input_ct_pet[:,1].unsqueeze(1) # Take only PET data
-        target = target_ct_seg[:,1].unsqueeze(1) # Take only PET data
-        input = torch.stack([self.post_pred(i) for i in decollate_batch(input)])
 
 
+
+        input = input_ct_pet[:,1:] # Take only PET data
+        target = target_ct_seg[:,1:]# Take only PET data
 
 
         input_rec = input_ct_pet[:,0].unsqueeze(1) # Take only
@@ -149,8 +140,9 @@ class DiceCE_Rec_Loss(_Loss):
 
         dice_loss = self.dice(input, target)
         ce_loss = self.ce(input, target)
+
         rec_loss = self.rec_loss(input_rec, target_rec)
 
-        total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_ce * ce_loss + self.lambda_rec * rec_loss
+        total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_dice * ce_loss + self.lambda_rec * rec_loss
 
         return total_loss

@@ -77,11 +77,19 @@ def prepare_parser(parser):
     parser.add_argument('--load_keyword', type=str, default=None,
                              help='Keyword to search for in the weights file.')
     parser.add_argument('--task', type=str, default='segmentation',
-                         help='Training task for the model: [segmentation, reconstruction, classification, segmentation_classification, transference]')
+                         help='Training task for the model: [segmentation, reconstruction, classification, segmentation_classification, transference, co-learning]')
     parser.add_argument('--early_fusion', default=False, action='store_true',
                          help='Train UNet with early fusion (channel concatenation).')
     parser.add_argument('--mask_attention', default=False, action='store_true',
                          help='Concatenate the distribution of tumor locations to the input channel (mask_attention).')
+    parser.add_argument('--pretrained', default=False, action='store_true',
+                        help='True if loading pre-trained weights for initialization (required for tranference pre-initialization).')
+    parser.add_argument('--vertical_skip', default=False, action='store_true',
+                        help='Add vertical skip connections (CT --> PET) in Mirror UNet.')
+    parser.add_argument('--attention_UNet', default=False, action='store_true',
+                        help='Use Attention UNet as a backbone.')
+
+    # Classification
     parser.add_argument('--class_backbone', type=str, default='ResNet',
                          help='Classification backbone: [ResNet, EfficientNet, CoAtNet, Ensemble].')
     parser.add_argument('--resnet_version', type=str, default='resnet18',
@@ -92,6 +100,14 @@ def prepare_parser(parser):
                          help='EfficientNet version: [b0, b4, widese_b0, widese_b4].')
     parser.add_argument('--coatnet_version', type=str, default='0',
                          help='CoAtNet version: [0, 1, 2, 3, 4].')
+
+
+
+    # Mirror U-Net specific parameters
+    parser.add_argument('--depth', type=int, default=1,
+                        help='Depth of layer weight sharing for Mirror UNet.')
+    parser.add_argument('--level', type=int, default=3,
+                        help='Level of weight sharing for Mirror UNet.')
     parser.add_argument('--mirror_th', type=float, default=0.1,
                         help='Weight for CT-modalitiy in the late fusion for mirror-UNet (experiment 1).')
     parser.add_argument('--learnable_th', default=False, action='store_true',
@@ -100,18 +116,10 @@ def prepare_parser(parser):
                         help='Weight for the reconstruction loss in the transference (experiment 2).')
     parser.add_argument('--lambda_seg', type=float, default=0.5,
                         help='Weight for the segmentation loss in the transference (experiment 2).')
-    parser.add_argument('--pretrained', default=False, action='store_true',
-                        help='True if loading pre-trained weights for initialization (required for tranference pre-initialization).')
-    parser.add_argument('--transference_switch', default=False, action='store_true',
-                        help='Swap reconstruction of CT with PET.')
-    parser.add_argument('--cut_ct_skip', default=False, action='store_true',
-                        help='Omit the ct skip connections in Mirror UNet.')
-    parser.add_argument('--vertical_skip', default=False, action='store_true',
-                        help='Add vertical skip connections (CT --> PET) in Mirror UNet.')
     parser.add_argument('--common_bottom', default=False, action='store_true',
                         help='Common bottom layer instead of common DOWN layer for Mirror UNet.')
-    parser.add_argument('--attention_UNet', default=False, action='store_true',
-                        help='Use Attention UNet as a backbone.')
+
+
 
 
     # Utils

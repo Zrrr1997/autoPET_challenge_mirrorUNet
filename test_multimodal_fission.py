@@ -79,6 +79,7 @@ if __name__ == "__main__":
 
     #summary(net, input_size=(args.batch_size, 2, 400, 400, 128))
 
+
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128]
     train_loader, val_loader, train_files, val_files = prepare_loaders(spatial_size=spatial_size, args=args)
@@ -95,7 +96,7 @@ if __name__ == "__main__":
     print('Input shape check:', check_data[input_mod].shape)
 
     #yhat = net(check_data['ct_pet_vol'].to(device))
-    #make_dot(yhat, params=dict(list(net.named_parameters()))).render("mirrorUNet_graph", format="png")
+    #make_dot(yhat, params=dict(list(net.named_parameters()))).render(f"mirrorUNet_graph_level_{args.level}_depth_{args.depth}", format="png")
     #exit()
 
 
@@ -112,6 +113,12 @@ if __name__ == "__main__":
         attention = prepare_attention(args)
         print('Attention shape:', attention.shape)
 
+    def f_class_label(class_label, batch):
+        if class_label != 0:
+            class_label = torch.ones(batch.shape[1:])
+        else:
+            class_label = torch.zeros(batch.shape[1:])
+        return class_label
 
     def prepare_batch(batch, device=None, non_blocking=False, task=args.task):
         if not args.mask_attention:
@@ -135,15 +142,18 @@ if __name__ == "__main__":
         elif task == 'classification' and args.proj_dim is not None: # classification with mask, with 1 channel
             return _prepare_batch((inp, batch["class_label"].unsqueeze(dim=1).float()), device, non_blocking)
         elif task == 'transference':
-            if args.transference_switch:
-                ct_vol = inp[:, 1:]
-                inp[:, 0] *= 0
-            else:
-                ct_vol = inp[:, :1]
 
+            ct_vol = inp[:, :1]
 
             return _prepare_batch((inp, torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
-            # may be more efficient if only ct_pet_vol is loaded into the GPU VRAM
+        elif task == 'co-learning':
+            ct_vol = inp[:, :1]
+
+            class_labels = batch['class_label'] # TODO: Maybe this is inefficient and redundant
+            class_label = torch.stack([f_class_label(el, ct_vol) for el in class_labels]).to(device)
+
+
+            return _prepare_batch((inp, torch.cat([ct_vol, batch['seg'], class_label], dim=1)), device, non_blocking)
         else:
             print("[ERROR]: No such task exists...")
             exit()
@@ -156,7 +166,7 @@ if __name__ == "__main__":
             score = engine.state.metrics['Accuracy']
         elif args.task == 'reconstruction':
             score = engine.state.metrics['MSE']
-        else: # Segmentation
+        else: # Segmentation, Transference, Co-Learning
             score = engine.state.metrics['Mean_Dice']
         return score
     def default_score_fn_F1(engine):
@@ -204,11 +214,11 @@ if __name__ == "__main__":
         output_transform=lambda x, y, y_pred: ([post_pred(i) for i in decollate_batch(y_pred)], [post_label(i) for i in decollate_batch(y)]),
         prepare_batch=prepare_batch,
     )
-    if args.task in ['classification', 'segmentation', 'transference', 'reconstruction']:
+    if args.task in ['classification', 'segmentation', 'transference', 'reconstruction', 'co-learning']:
         checkpoint_handler_best_val = ModelCheckpoint(
             args.ckpt_dir, "net_best_val", n_saved=1, require_empty=False, score_function=default_score_fn
         )
-        if args.task in ['segmentation', 'transference']:
+        if args.task in ['segmentation', 'transference', 'co-learning']:
             checkpoint_handler_best_val_F1 = ModelCheckpoint(
                 args.ckpt_dir, "net_best_val_F1", n_saved=1, require_empty=False, score_function=default_score_fn_F1
             )
@@ -273,9 +283,32 @@ if __name__ == "__main__":
                     best_bg_dice = bg_dice
                     with open(os.path.join(args.ckpt_dir, f'best_bg_dice.txt'), 'a+') as f:
                         f.write(str(best_bg_dice) + '\n')
+        #####################################
+        ##         CO-LEARNING             ##
+        #####################################
+        if args.task=='co-learning':
+            f1_dice, bg_dice = co_learning(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)
+            if args.evaluate_only:
+                exit()
+            if args.sliding_window:
+                writer.add_scalar('F1 Dice', f1_dice, trainer.state.iteration)
+                writer.add_scalar('BG Dice', bg_dice, trainer.state.iteration)
+
+                if f1_dice > best_f1_dice:
+                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice.pth'))
+                    best_f1_dice = f1_dice
+                    with open(os.path.join(args.ckpt_dir, f'best_f1_dice.txt'), 'a+') as f:
+                        f.write(str(best_f1_dice) + '\n')
+                if bg_dice > best_bg_dice:
+                    torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_bg_dice.pth'))
+                    best_bg_dice = bg_dice
+                    with open(os.path.join(args.ckpt_dir, f'best_bg_dice.txt'), 'a+') as f:
+                        f.write(str(best_bg_dice) + '\n')
 
         if args.task == 'reconstruction':
             r_loss = reconstruction(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)
+            if args.evaluate_only:
+                exit()
 
         return
 

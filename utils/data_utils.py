@@ -213,6 +213,8 @@ def prepare_loaders(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPE
             task_cache_dir = f'./cache/{args.task}/{input_mod}/sliding_window_{args.sliding_window}/with_DA_{args.with_DA}'
             if args.task == 'transference':
                 task_cache_dir = task_cache_dir.replace('transference', 'segmentation') # Segmentation and Transference tasks should share the cache dir
+            #if args.task == 'co-learning':
+            #    task_cache_dir = task_cache_dir.replace('co-learning', 'segmentation') # Segmentation and Transference tasks should share the cache dir
             if args.task == 'reconstruction':
                 task_cache_dir = task_cache_dir.replace('reconstruction', 'segmentation') # Segmentation and Reconstruction tasks should share the cache dir
             if args.debug:
