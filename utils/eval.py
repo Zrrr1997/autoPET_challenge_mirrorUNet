@@ -14,7 +14,7 @@ from monai.inferers import sliding_window_inference
 from monai.data import list_data_collate, decollate_batch
 from monai.metrics import compute_meandice, compute_meaniou
 from monai.visualize import GradCAM
-from monai.transforms import Resize, AddChannel
+from monai.transforms import Resize, AddChannel, RandGaussianNoise, RandCoarseShuffle
 import torch.nn.functional as nnf
 
 def f_class_label(class_label, batch):
@@ -50,16 +50,53 @@ def prepare_batch(batch, args, device=None, non_blocking=False, input_mod=None):
     elif task == 'transference':
 
         ct_vol = inp[:, :1]
+        if args.self_supervision == 'L2_mask':
+            rand_shuffle = RandCoarseShuffle(prob=1.0, spatial_size=16, holes=args.n_masks)
+
+
+            ct_vol_shuffled = rand_shuffle(ct_vol)
+            return _prepare_batch((torch.cat([ct_vol_shuffled, inp[:,1:], ct_vol], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
+
+
+            '''
+            non_zeros = torch.nonzero(ct_vol)
+            x_max = torch.max(non_zeros[:,2]).cpu().detach().numpy()
+            x_min = torch.min(non_zeros[:,2]).cpu().detach().numpy()
+            y_max = torch.max(non_zeros[:,3]).cpu().detach().numpy()
+            y_min = torch.min(non_zeros[:,3]).cpu().detach().numpy()
+            z_max = torch.max(non_zeros[:,4]).cpu().detach().numpy()
+            z_min = torch.min(non_zeros[:,4]).cpu().detach().numpy()
+            x_scale = x_max - x_min
+            y_scale = y_max - y_min
+            z_scale = z_max - z_min
+
+            n_masks = args.n_masks
+            for i in range(n_masks):
+                x = np.random.randint((x_min + 8) + x_scale / 4, (x_max - 8) - (x_scale / 4))
+                y = np.random.randint((y_min + 8) + y_scale / 4, (y_max - 8) - (y_scale / 4))
+                z = np.random.randint((z_min + 8) + z_scale / 12, (z_max - 8) - (z_scale / 12))
+                mask = torch.ones(ct_vol.shape).to(device)
+                mask[:,:, x-8:x+8, y-8:y+8, z-8:z+8] *= 0
+
+                ct_vol *= mask
+            '''
+        elif args.self_supervision == 'L2_noise':
+            rand_noise = RandGaussianNoise(prob=1.0, std=0.3)
+            ct_vol_noisy = rand_noise(ct_vol)
+            return _prepare_batch((torch.cat([ct_vol_noisy, inp[:,1:]], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
 
         return _prepare_batch((inp, torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
         #return _prepare_batch((inp, torch.cat([batch['ct_vol'], batch['seg']], dim=1)), device, non_blocking)
-    elif task == 'co-learning':
-            ct_vol = inp[:, :1]
+    elif task == 'fission':
+            # TODO; for multi-task
+            #ct_vol = inp[:, :1]
 
-            class_labels = batch['class_label'] # TODO: Maybe this is inefficient and redundant
-            class_label = torch.stack([f_class_label(el, batch) for el in class_labels]).to(device)
+            #class_labels = batch['class_label'] # TODO: Maybe this is inefficient and redundant
+            #class_label = torch.stack([f_class_label(el, batch) for el in class_labels]).to(device)
 
-            return _prepare_batch((inp, torch.cat([ct_vol, batch['seg'], class_label], dim=1)), device, non_blocking)
+            #return _prepare_batch((inp, torch.cat([ct_vol, batch['seg'], class_label], dim=1)), device, non_blocking)
+            return _prepare_batch((inp, torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
+
     else:
         print("[ERROR]: No such task exists...")
         exit()
@@ -200,7 +237,7 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
     net.train()
     return dice_F1, dice_bg
 
-def co_learning(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=None, writer=None, trainer=None):
+def fission(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=None, writer=None, trainer=None):
 
 
     if not args.sliding_window and not args.save_nifti:
@@ -222,19 +259,16 @@ def co_learning(args, val_loader, net, evaluator, post_pred, post_label, device,
                 mask_out = net(inp)
             if args.save_nifti:
                 save_nifti(inp, device, mask_out, args, post_pred, post_label, label)
-            recon_out = mask_out[:, :1]
+            recon_out = mask_out[:, :2]
 
-            rec_loss.append(torch.mean(torch.abs(inp[:, :1] - recon_out)).cpu().detach().numpy())
+            rec_loss.append(torch.mean(torch.abs(inp[:, :2] - recon_out)).cpu().detach().numpy())
 
-            class_out = torch.stack([torch.mean(el) for el in mask_out[:,2:]]).cpu().detach().numpy()
-            label_class = torch.stack([torch.mean(el) for el in label[:,2:]]).cpu().detach().numpy()
-            for el in class_out:
-                class_pred.append(el)
-            for el in label_class:
-                class_label.append(el)
+
 
             if args.save_eval_img and i == 0:
-                cv2.imwrite(f'{args.log_dir}/recon.png', recon_out[0,:,:,:,64].cpu().detach().numpy().transpose(1 , 2, 0) * 255)
+                cv2.imwrite(f'{args.log_dir}/recon_ct.png', recon_out[0,:1,:,:,64].cpu().detach().numpy().transpose(1 , 2, 0) * 255)
+                cv2.imwrite(f'{args.log_dir}/recon_pet.png', recon_out[0,1:2,:,:,64].cpu().detach().numpy().transpose(1 , 2, 0) * 255)
+
                 cv2.imwrite(f'{args.log_dir}/pet.png', inp[0,1:,:,:,64].cpu().detach().numpy().transpose(1, 2, 0) * 255)
                 cv2.imwrite(f'{args.log_dir}/ct.png', inp[0,:1,:,:,64].cpu().detach().numpy().transpose(1, 2, 0) * 255)
 
@@ -378,16 +412,22 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
     affine[0][0] = -1
     spatial_size = (400, 400, 384)
     if args.separate_outputs:
-        (out_ct, out_pet) = out
+        if args.task != 'fission':
+            (out_ct, out_pet) = out
+        else:
+            (out_ct, out_pet, out_seg) = out
         if args.task == 'segmentation':
             out_fused = torch.stack([post_pred(i) for i in decollate_batch(out_ct * args.mirror_th + out_pet * (1.0 - args.mirror_th))])
             out_fused = convert_output(out_fused, device, spatial_size, add_channel)
 
 
-        if args.task != 'transference':
+        if args.task not in ['transference', 'fission']:
             out_ct = torch.stack([post_pred(i) for i in decollate_batch(out_ct)])
 
-        out_pet = torch.stack([post_pred(i) for i in decollate_batch(out_pet)])
+        if args.task != 'fission':
+            out_pet = torch.stack([post_pred(i) for i in decollate_batch(out_pet)])
+        else:
+            out_seg = torch.stack([post_pred(i) for i in decollate_batch(out_seg)])
         label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
         inp_ct = torch.Tensor(inp.cpu().detach().numpy()).to(device)
@@ -395,17 +435,28 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
 
         inp_pet = convert_output(inp, device, spatial_size, add_channel)
 
-        if args.task != 'transference':
+        if args.task not in ['transference', 'fission']:
             out_ct = convert_output(out_ct, device, spatial_size, add_channel)
         else:
             out_ct = nnf.interpolate(add_channel(add_channel(out_ct[0, 0])), size=spatial_size)[0][0]
-            out_ct *= ((inp_ct > 0) *1.0)
+            out_ct *= ((inp_ct > 0) * 1.0)
 
-        out_pet = convert_output(out_pet, device, spatial_size, add_channel)
+        if args.task != 'fission':
+            out_pet = convert_output(out_pet, device, spatial_size, add_channel)
+        else:
+            out_pet = nnf.interpolate(add_channel(add_channel(out_pet[0, 0])), size=spatial_size)[0][0]
+            out_pet *= ((inp_pet > 0) *1.0)
+            out_seg = convert_output(out_seg, device, spatial_size, add_channel)
+
         out_label = convert_output(label, device, spatial_size, add_channel)
+
 
         names = ['ct', 'pet', 'ct_pred', 'pet_pred', 'label']
         data = [inp_ct, inp_pet, out_ct, out_pet, out_label]
+
+        if args.task == 'fission':
+            names.append('out_seg')
+            data.append(out_seg)
 
         if args.task == 'segmentation':
             names.append('fused_pred')

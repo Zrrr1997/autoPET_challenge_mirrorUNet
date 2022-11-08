@@ -17,7 +17,7 @@ from monai.transforms import AsDiscrete
 
 
 # Extension of the DiceCE loss with Reconstuction
-class DiceCE_Rec_Loss(_Loss):
+class DiceCE_Rec_Class_Loss(_Loss):
     def __init__(
         self,
         include_background: bool = True,
@@ -35,7 +35,7 @@ class DiceCE_Rec_Loss(_Loss):
         lambda_dice: float = 0.5,
         lambda_ce: float = 0.5,
         lambda_rec: float = 1.0,
-        args=None
+        lambda_class: float = 0.5
     ) -> None:
         """
         Args:
@@ -77,12 +77,13 @@ class DiceCE_Rec_Loss(_Loss):
         super().__init__()
         reduction = look_up_option(reduction, DiceCEReduction).value
 
-
-        # include_background should be set to True if the dice loss stagnates because the error signal is too weak from the small tumor lesions
         self.dice = DiceLoss(to_onehot_y=to_onehot_y, softmax=softmax, include_background=include_background, batch=batch)
 
 
         self.cross_entropy = nn.CrossEntropyLoss(weight=ce_weight, reduction=reduction)
+
+        self.ce_class = nn.BCELoss()
+
         self.rec_loss = nn.MSELoss()
         if lambda_dice < 0.0:
             raise ValueError("lambda_dice should be no less than 0.0.")
@@ -91,11 +92,10 @@ class DiceCE_Rec_Loss(_Loss):
         self.lambda_dice = lambda_dice
         self.lambda_ce = lambda_ce
         self.lambda_rec = lambda_rec
+        self.lambda_class = lambda_class
 
         self.post_label = AsDiscrete(to_onehot=2)
         self.post_pred = AsDiscrete(argmax=True, to_onehot=2)
-
-        self.args = args
 
 
 
@@ -118,7 +118,7 @@ class DiceCE_Rec_Loss(_Loss):
         return self.cross_entropy(input, target)
 
 
-    def forward(self, input_ct_pet: torch.Tensor, target_ct_seg: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_ct_pet_class: torch.Tensor, target_ct_seg_class: torch.Tensor) -> torch.Tensor:
         """
         Args:
             input: the shape should be BNH[WD].
@@ -131,26 +131,18 @@ class DiceCE_Rec_Loss(_Loss):
         """
 
 
-        if self.args.task == 'transference':
 
-            input = input_ct_pet[:,1:] # Take only PET_pred data
+        input = input_ct_pet_class[:,1:2] # Take only PET data
+        target = target_ct_seg_class[:,1:2]# Take only PET data
 
-            target = target_ct_seg[:,1:]# Take only SEG_gt data
 
-            input_rec = input_ct_pet[:,0].unsqueeze(1) # Take only CT_pred
-            target_rec = target_ct_seg[:,0].unsqueeze(1) # Take only CT gt
-        elif self.args.task == 'fission':
-            input = input_ct_pet[:,2:] # Take only SEG_pred data from lightweight decoder
 
-            target = target_ct_seg[:,2:]# Take only SEG_gt data
-            #print(target_ct_seg.shape)
-            #exit()
-            input_rec = input_ct_pet[:,:2].unsqueeze(1)
-            target_rec = target_ct_seg[:,:2].unsqueeze(1)
-        else:
-            print(f'[ERROR] No such task implemented for this loss {self.args.task}')
-            exit()
+        input_class = torch.stack([torch.mean(el) for el in input_ct_pet_class[:,2:]]) # Take only PET data
+        target_class = torch.stack([torch.mean(el) for el in target_ct_seg_class[:,2:]]) # Take only PET data
 
+
+        input_rec = input_ct_pet_class[:,0].unsqueeze(1) # Take only
+        target_rec = target_ct_seg_class[:,0].unsqueeze(1) # Take only CT gt
 
 
         if len(input.shape) != len(target.shape):
@@ -158,10 +150,10 @@ class DiceCE_Rec_Loss(_Loss):
 
         dice_loss = self.dice(input, target)
         ce_loss = self.ce(input, target)
+        class_loss = self.ce_class(input_class, target_class)
 
         rec_loss = self.rec_loss(input_rec, target_rec)
 
-
-        total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_dice * ce_loss + self.lambda_rec * rec_loss
+        total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_dice * ce_loss + self.lambda_rec * rec_loss + self.lambda_class * class_loss
 
         return total_loss

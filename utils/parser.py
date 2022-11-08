@@ -88,6 +88,8 @@ def prepare_parser(parser):
                         help='Add vertical skip connections (CT --> PET) in Mirror UNet.')
     parser.add_argument('--attention_UNet', default=False, action='store_true',
                         help='Use Attention UNet as a backbone.')
+    parser.add_argument('--cut_ct_skip', default=False, action='store_true',
+                        help='Use Attention UNet as a backbone.')
 
     # Classification
     parser.add_argument('--class_backbone', type=str, default='ResNet',
@@ -118,6 +120,10 @@ def prepare_parser(parser):
                         help='Weight for the segmentation loss in the transference (experiment 2).')
     parser.add_argument('--common_bottom', default=False, action='store_true',
                         help='Common bottom layer instead of common DOWN layer for Mirror UNet.')
+    parser.add_argument('--self_supervision', type=str, default='L2',
+                         help='Self-supervision task for transference, fission, or multi-task learning: [L2, L2_noise, L2_mask].')
+    parser.add_argument('--n_masks', type=int, default=1,
+                        help='Number of masks to use for the MAE in the transference (experiment 2).')
 
 
 

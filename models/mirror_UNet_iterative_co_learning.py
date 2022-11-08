@@ -136,6 +136,7 @@ class Mirror_UNet(nn.Module):
     ) -> None:
 
         super().__init__()
+        #ztorch.manual_seed(0)
 
         if len(channels) < 2:
             raise ValueError("the length of `channels` should be no less than 2.")
@@ -175,100 +176,69 @@ class Mirror_UNet(nn.Module):
         self.down_1 = nn.ModuleList()
         self.up_1 = nn.ModuleList()
 
-        self.common_downs = nn.ModuleList()
-        self.common_ups = nn.ModuleList()
-
         self.down_2 = nn.ModuleList()
         self.up_2 = nn.ModuleList()
 
-        self.dec = nn.ModuleList()
+        factor = 2 if self.args.vertical_skip else 1
 
+        class_bottleneck_size = 0
 
         device = torch.device(f"cuda:{args.gpu}")
+        self.device = device
+
         channel_list = [self.in_channels] + list(self.channels)
         out_c_list = [self.out_channels] + list(self.channels)
-
-
-        if self.args.depth == 1:
-            if self.args.level < 3:
-                offset = 2 - self.args.level
-                self.common_down_indices = [len(self.channels) - 2 - offset]
-                self.common_up_indices = [-1]
-            else:
-                self.common_down_indices = [-1] # only bottom layer or upsampling layer
-                offset = self.args.level - 4
-                self.common_up_indices = [len(self.channels) - 2 - offset]
-
-
-
-        elif args.depth == 2:
-            self.common_down_indices = [len(self.channels) - 2]
-            self.common_up_indices = [len(self.channels) - 2]
-        elif args.depth == 3:
-            self.common_down_indices = [len(self.channels) - 2, len(self.channels) - 3]
-            self.common_up_indices = [len(self.channels) - 2, len(self.channels) - 3]
-
-
-
         for i, c in enumerate(channel_list):
             if i > len(self.channels) - 2:
                 break
             is_top = (i == 0)
-            if i in self.common_down_indices: #== len(self.channels) - 2: # arrived at level = 2
-                #self.common_down = self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device)
-                self.common_downs.append(self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device))
+            if i == len(self.channels) - 2 and not args.common_bottom:
+                self.common_down = self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device)
+                class_bottleneck_size = channel_list[i + 1]
             else:
                 self.down_1.append(self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device))
                 self.down_2.append(self._get_down_layer(c, channel_list[i + 1], 2, is_top).to(device))
 
-            ###### Upsampling Layers ########
-
             if i == len(self.channels) - 2:
                 up_in = channel_list[i + 1] + channel_list[i + 2]
-
             else:
                 up_in = channel_list[i + 1] * 2
-
-
-            if self.args.task in ['transference', 'fission'] and out_c_list[i] == 2:
-                if i in self.common_up_indices:
-                    self.common_ups.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
-
-                else:
-                    self.up_1.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
-                    #if self.args.task == 'fission':
-                    #    self.up_2.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
-
+            if self.args.task == 'transference' and out_c_list[i] == 2:
+                self.up_1.append(self._get_up_layer(factor * up_in, 1, 2, is_top).to(device))
             else:
-                if i in self.common_up_indices:
-                    self.common_ups.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
-
-                else:
-                    self.up_1.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
+                self.up_1.append(self._get_up_layer(factor * up_in, out_c_list[i], 2, is_top).to(device))
 
 
-            if i not in self.common_up_indices: # and not (out_c_list[i] == 2 and self.args.task == 'fission'):
-                self.up_2.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
+            self.up_2.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
 
-        if self.args.depth == 1 and self.args.level != 3: # only case where bottom layer is not shared
+        if not self.args.common_bottom:
             self.bottom_layer_1 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
             self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
         else:
             self.bottom_layer = self._get_bottom_layer(self.channels[-2], self.channels[-1])
+            class_bottleneck_size = self.channels[-1]
 
+        self.flatten_channels = Convolution(
+                    self.dimensions,
+                    class_bottleneck_size,
+                    1,
+                    strides=1,
+                    kernel_size=1,
+                    act=self.act,
+                    norm=self.norm,
+                    dropout=self.dropout,
+                    bias=self.bias,
+                    adn_ordering=self.adn_ordering,
+                ).to(self.device)
+        in_dense = 5000
 
-        if self.task == 'fission':
-            dec_channels = out_c_list[:-2]
-            for i, c in enumerate(dec_channels[::-1]):
-                c_out = 1 if c == 2 else c
-
-
-                if i == 0:
-                    self.dec.append(self._get_up_layer(2 * self.channels[-1], c_out, 2, False).to(device))
-                else:
-                    self.dec.append(self._get_up_layer(dec_channels[::-1][i - 1], c_out, 2, False).to(device))
-
-
+        self.fc = nn.Sequential(nn.Flatten(),
+                                nn.Linear(in_dense, 256),
+                                nn.ReLU(),
+                                nn.Dropout(p=0.5),
+                                nn.Linear(256, 1),
+                                nn.Sigmoid()
+        )
 
 
 
@@ -375,152 +345,130 @@ class Mirror_UNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # assume one channel for each modality
 
-        common_bottom = not (self.args.depth == 1 and self.args.level != 3)
-
+        if self.args.vertical_skip:
+            return self.forward_vertical(x)
 
         x_1 = x[:,0].unsqueeze(dim=1) # CT
 
         down_x_1 = []
-        for i, d in enumerate(self.down_1):
-            if i == self.common_down_indices[0]:
-                for c_d in self.common_downs:
-                    x_1 = c_d(x_1)
-                    down_x_1.append(x_1)
-
+        for d in self.down_1:
             x_1 = d(x_1)
             down_x_1.append(x_1)
+        if not self.args.common_bottom:
+            x_1 = self.common_down(x_1)
+            class_out = self.fc(self.flatten_channels(x_1))
 
-        if (self.args.level == 2 and self.args.depth == 1) or self.args.depth >= 2:
-            for d in self.common_downs:
-                x_1 = d(x_1)
-                down_x_1.append(x_1)
+            down_x_1.append(x_1)
 
-
-        if not common_bottom:
             bottom_x_1 = self.bottom_layer_1(x_1)
         else:
-
             bottom_x_1 = self.bottom_layer(x_1)
-        if self.args.cut_ct_skip:
-            x_1 = torch.cat([bottom_x_1, 0 * down_x_1[-1]], dim=1)
-        else:
-            x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
 
+            class_out = self.fc(self.flatten_channels(bottom_x_1))
 
-
+        x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
         up_x_1 = []
-        passed_common = False
         for i, up in enumerate(self.up_1[::-1]):
-            if i == len(self.channels) -2 - self.common_up_indices[0]:
-
-                for j, c_up in enumerate(self.common_ups[::-1]):
-                    if self.args.cut_ct_skip:
-                        #x_1 = c_up(x_1) # dead code
-                        x_1 = torch.cat([c_up(x_1), 0 * down_x_1[-j - i - 2]], dim=1)
-                    else:
-                        x_1 = torch.cat([c_up(x_1), down_x_1[-j - i - 2]], dim=1)
-                passed_common = True
-
-            if passed_common:
-                if len(down_x_1) < abs(-i -len(self.common_ups) - 2):
-                    break
-                x_1 = torch.cat([up(x_1), down_x_1[-i - len(self.common_ups) - 2]], dim=1)
-            else:
-                if len(down_x_1) < abs(-i - 2):
-                    break
-                if self.args.cut_ct_skip:
-                    #x_1 = up(x_1)
-                    x_1 = torch.cat([up(x_1), 0 * down_x_1[-i - 2]], dim=1)
-                else:
-                    x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
+            if len(down_x_1) < abs(-i - 2):
+                break
+            x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
         x_1 = self.up_1[0](x_1)
 
 
         x_2 = x[:,1].unsqueeze(dim=1) # PET
 
         down_x_2 = []
-        for i, d in enumerate(self.down_2):
-            if i == self.common_down_indices[0]:
-                for c_d in self.common_downs:
-                    x_2 = c_d(x_2)
-                    down_x_2.append(x_2)
-
+        for d in self.down_2:
             x_2 = d(x_2)
             down_x_2.append(x_2)
+        if not self.args.common_bottom:
+            x_2 = self.common_down(x_2)
 
-        if (self.args.level == 2 and self.args.depth == 1) or self.args.depth >= 2:
-            for d in self.common_downs:
-                x_2 = d(x_2)
-                down_x_2.append(x_2)
+            down_x_2.append(x_2)
 
 
-        if not common_bottom:
-            bottom_x_2 = self.bottom_layer_2(x_2)
+        if not self.args.common_bottom:
+            x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1]], dim=1)
         else:
+            x_2 = torch.cat([self.bottom_layer(x_2), down_x_2[-1]], dim=1)
 
-            bottom_x_2 = self.bottom_layer(x_2)
-
-
-
-        x_2 = torch.cat([bottom_x_2, down_x_2[-1]], dim=1)
-
-
-
-        passed_common = False
         for i, up in enumerate(self.up_2[::-1]):
-            if i == len(self.channels) -2 - self.common_up_indices[0]:
-                for j, c_up in enumerate(self.common_ups[::-1]):
-                    x_2 = torch.cat([c_up(x_2), down_x_2[-j - i - 2]], dim=1)
-                passed_common = True
-            if passed_common:
-                if len(down_x_2) < abs(-i -len(self.common_ups) - 2):
-                    break
-                x_2 = torch.cat([up(x_2), down_x_2[-i - len(self.common_ups) - 2]], dim=1)
-            else:
-                if len(down_x_2) < abs(-i - 2):
-                    break
-
-                x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
-
+            if len(down_x_2) < abs(-i - 2):
+                break
+            x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
         x_2 = self.up_2[0](x_2)
 
-        x_3 = None
-        if self.args.task == 'fission':
-            x_3 = torch.cat([bottom_x_1, bottom_x_2], dim=1)
-
-            for i, d in enumerate(self.dec):
-                x_3 = d(x_3)
+        class_out = torch.stack([el.repeat(x.shape[1:]) for el in class_out])
+        assert class_out.shape == x.shape
+        
+        return self.process_output(x_1, x_2, class_out)
 
 
-        return self.process_output(x_1, x_2, x_3)
+    def forward_vertical(self, x: torch.Tensor) -> torch.Tensor:
+        x_2 = x[:,1].unsqueeze(dim=1) # PET
 
+        down_x_2 = []
+        up_x_2 = []
+        for d in self.down_2:
+            x_2 = d(x_2)
+            down_x_2.append(x_2)
+        if not self.args.common_bottom:
+            x_2 = self.common_down(x_2)
+            down_x_2.append(x_2)
 
-
-
-    def process_output(self, x_1: torch.Tensor, x_2: torch.Tensor, x_3: torch.Tensor) -> torch.Tensor:
-        if self.args.separate_outputs:
-            if self.args.task != 'fission':
-                return x_1, x_2
-            else:
-                return x_1, x_3, x_2 # CT, PET, SEG
-
-
-        if self.task == 'segmentation':
-            if self.args.learnable_th:
-                out = torch.clamp(self.learnable_th, 0, 1) * x_1 + (1 - torch.clamp(self.learnable_th, 0, 1)) * x_2
-            else:
-                out = self.args.mirror_th * x_1 + (1 - self.args.mirror_th) * x_2 # For decision fusion segmentation (exp_1)
-
-            return out
-        elif self.task == 'reconstruction' or self.task == 'transference':
-
-            x_12 = torch.cat((x_1, x_2), dim=1)
-            return x_12
-        elif self. task == 'fission':
-            x_123 = torch.cat((x_1, x_3, x_2), dim=1)
-            return x_123
+            bottom_x_2 = self.bottom_layer_2(x_2)
         else:
-            raise ValueError(f"Task {self.task} is not supported!")
+            bottom_x_2 = self.bottom_layer(x_2)
+
+        if not self.args.common_bottom:
+            x_2 = torch.cat([self.bottom_layer_2(x_2), down_x_2[-1]], dim=1)
+        else:
+            x_2 = torch.cat([self.bottom_layer(x_2), down_x_2[-1]], dim=1)
+
+        for i, up in enumerate(self.up_2[::-1]):
+            if len(down_x_2) < abs(-i - 2):
+                break
+            up_x_2.append(up(x_2))
+            x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
+        x_2 = self.up_2[0](x_2)
+
+        x_1 = x[:,0].unsqueeze(dim=1) # CT
+
+        down_x_1 = []
+        for d in self.down_1:
+            x_1 = d(x_1)
+            down_x_1.append(x_1)
+        if not self.args.common_bottom:
+            x_1 = self.common_down(x_1)
+            down_x_1.append(x_1)
+
+            bottom_x_1 = self.bottom_layer_1(x_1)
+        else:
+            bottom_x_1 = self.bottom_layer(x_1)
+
+
+        x_1 = torch.cat([bottom_x_1, down_x_1[-1], bottom_x_2, down_x_2[-1]], dim=1)
+        up_x_1 = []
+
+        for i, up in enumerate(self.up_1[::-1]):
+            if len(down_x_1) < abs(-i - 2):
+                break
+
+            x_1 = torch.cat([up(x_1), down_x_1[-i - 2], up_x_2[i], down_x_2[-i -2]], dim=1)
+
+
+        x_1 = self.up_1[0](x_1)
+
+        return self.process_output(x_1, x_2, class_out)
+
+    def process_output(self, x_1: torch.Tensor, x_2: torch.Tensor, class_out: torch.Tensor) -> torch.Tensor:
+        if self.args.separate_outputs:
+            return x_1, x_2, class_out
+
+
+        x_12 = torch.cat((x_1, x_2, class_out), dim=1)
+        return x_12
+
 
 
     def load_pretrained_unequal(self, file):

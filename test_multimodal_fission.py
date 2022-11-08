@@ -38,6 +38,7 @@ from monai.handlers import (
     TensorBoardStatsHandler,
     LrScheduleHandler,
 )
+from monai.transforms import RandGaussianNoise, RandCoarseShuffle
 
 # Utils
 from utils.data_utils import prepare_loaders
@@ -108,6 +109,10 @@ if __name__ == "__main__":
 
     opt = torch.optim.Adam(net.parameters(), lr, weight_decay=1e-5)
 
+    if args.self_supervision != 'L2':
+        rand_noise = RandGaussianNoise(prob=1.0, std=0.3)
+        rand_shuffle = RandCoarseShuffle(prob=1.0, spatial_size=16, holes=args.n_masks)
+
     attention = None
     if args.mask_attention:
         attention = prepare_attention(args)
@@ -141,19 +146,36 @@ if __name__ == "__main__":
             return _prepare_batch((inp, batch["class_label"].unsqueeze(dim=1).float()), device, non_blocking)
         elif task == 'classification' and args.proj_dim is not None: # classification with mask, with 1 channel
             return _prepare_batch((inp, batch["class_label"].unsqueeze(dim=1).float()), device, non_blocking)
-        elif task == 'transference':
-
+        elif task in ['transference', 'fission']:
             ct_vol = inp[:, :1]
 
-            return _prepare_batch((inp, torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
-        elif task == 'co-learning':
-            ct_vol = inp[:, :1]
 
-            class_labels = batch['class_label'] # TODO: Maybe this is inefficient and redundant
-            class_label = torch.stack([f_class_label(el, ct_vol) for el in class_labels]).to(device)
+            if args.self_supervision == 'L2':
+                if args.task == 'transference':
+                    return _prepare_batch((inp, torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
+                elif args.task == 'fission':
+                    return _prepare_batch((inp, torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
 
+            elif args.self_supervision == 'L2_noise':
+                ct_vol_noisy = rand_noise(ct_vol)
+                if args.task == 'transference':
+                    return _prepare_batch((torch.cat([ct_vol_noisy, inp[:,1:]], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
+                elif args.task == 'fission':
+                    return _prepare_batch((torch.cat([ct_vol_noisy, inp[:,1:]], dim=1), torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
 
-            return _prepare_batch((inp, torch.cat([ct_vol, batch['seg'], class_label], dim=1)), device, non_blocking)
+            elif args.self_supervision == 'L2_mask':
+
+                ct_vol_masked = ct_vol.clone().detach()
+                ct_vol_masked = rand_shuffle(ct_vol_masked)
+
+                if args.task == 'transference':
+                    return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
+                elif args.task == 'fission':
+                    return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
+
+            else:
+                print('[ERROR] No such self-supervision task is defined.')
+
         else:
             print("[ERROR]: No such task exists...")
             exit()
@@ -166,7 +188,7 @@ if __name__ == "__main__":
             score = engine.state.metrics['Accuracy']
         elif args.task == 'reconstruction':
             score = engine.state.metrics['MSE']
-        else: # Segmentation, Transference, Co-Learning
+        else: # Segmentation, Transference, Fission
             score = engine.state.metrics['Mean_Dice']
         return score
     def default_score_fn_F1(engine):
@@ -214,11 +236,11 @@ if __name__ == "__main__":
         output_transform=lambda x, y, y_pred: ([post_pred(i) for i in decollate_batch(y_pred)], [post_label(i) for i in decollate_batch(y)]),
         prepare_batch=prepare_batch,
     )
-    if args.task in ['classification', 'segmentation', 'transference', 'reconstruction', 'co-learning']:
+    if args.task in ['classification', 'segmentation', 'transference', 'reconstruction', 'fission']:
         checkpoint_handler_best_val = ModelCheckpoint(
             args.ckpt_dir, "net_best_val", n_saved=1, require_empty=False, score_function=default_score_fn
         )
-        if args.task in ['segmentation', 'transference', 'co-learning']:
+        if args.task in ['segmentation', 'transference', 'fission']:
             checkpoint_handler_best_val_F1 = ModelCheckpoint(
                 args.ckpt_dir, "net_best_val_F1", n_saved=1, require_empty=False, score_function=default_score_fn_F1
             )
@@ -284,10 +306,10 @@ if __name__ == "__main__":
                     with open(os.path.join(args.ckpt_dir, f'best_bg_dice.txt'), 'a+') as f:
                         f.write(str(best_bg_dice) + '\n')
         #####################################
-        ##         CO-LEARNING             ##
+        ##          FISSION                ##
         #####################################
-        if args.task=='co-learning':
-            f1_dice, bg_dice = co_learning(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)
+        if args.task=='fission':
+            f1_dice, bg_dice = fission(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)
             if args.evaluate_only:
                 exit()
             if args.sliding_window:
@@ -335,5 +357,7 @@ if __name__ == "__main__":
     else:
 
         run_validation(evaluator)
+        exit()
+
         state = evaluator.run(val_loader)
     print(state)
