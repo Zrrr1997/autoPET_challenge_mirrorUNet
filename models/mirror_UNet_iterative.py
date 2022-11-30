@@ -268,7 +268,7 @@ class Mirror_UNet(nn.Module):
             self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
         else:
             self.bottom_layer = self._get_bottom_layer(self.channels[-2], self.channels[-1])
-            self.bottom_layer_1, self.bottom_layer_2 = None, None
+            self.bottom_layer_1, self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1]), self._get_bottom_layer(self.channels[-2], self.channels[-1])
 
         class_bottleneck_size = self.channels[-1]
 
