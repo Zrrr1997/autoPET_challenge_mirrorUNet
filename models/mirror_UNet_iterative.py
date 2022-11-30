@@ -203,24 +203,15 @@ class Mirror_UNet(nn.Module):
         out_c_list = [self.out_channels] + list(self.channels)
 
 
-        if self.depth == 1:
-            if self.level < 3:
-                offset = 2 - self.level
-                self.common_down_indices = [len(self.channels) - 2 - offset]
-                self.common_up_indices = [-1]
-            else:
-                self.common_down_indices = [-1] # only bottom layer or upsampling layer
-                offset = self.level - 4
-                self.common_up_indices = [len(self.channels) - 2 - offset]
+        # Assume Level == 3, Depth == 1 for TorchScript
 
+        self.common_down_indices = [-1] # only bottom layer or upsampling layer
+        offset = self.level - 4
+        self.common_up_indices = [len(self.channels) - 2 - offset]
 
-
-        elif self.depth == 2:
-            self.common_down_indices = [len(self.channels) - 2]
-            self.common_up_indices = [len(self.channels) - 2]
-        elif self.depth == 3:
-            self.common_down_indices = [len(self.channels) - 2, len(self.channels) - 3]
-            self.common_up_indices = [len(self.channels) - 2, len(self.channels) - 3]
+        print('common down', self.common_down_indices)
+        print('common up', self.common_up_indices)
+        exit()
 
 
 
@@ -263,12 +254,8 @@ class Mirror_UNet(nn.Module):
             if i not in self.common_up_indices: # and not (out_c_list[i] == 2 and self.args.task == 'fission'):
                 self.up_2.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
 
-        if self.depth == 1 and self.level != 3: # only case where bottom layer is not shared
-            self.bottom_layer_1 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
-            self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
-        else:
-            self.bottom_layer = self._get_bottom_layer(self.channels[-2], self.channels[-1])
-            self.bottom_layer_1, self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1]), self._get_bottom_layer(self.channels[-2], self.channels[-1])
+
+        self.bottom_layer = self._get_bottom_layer(self.channels[-2], self.channels[-1])
 
         class_bottleneck_size = self.channels[-1]
 
@@ -434,11 +421,9 @@ class Mirror_UNet(nn.Module):
                 down_x_1.append(x_1)
 
 
-        if not common_bottom:
-            bottom_x_1 = self.bottom_layer_1(x_1)
-        else:
 
-            bottom_x_1 = self.bottom_layer(x_1)
+
+        bottom_x_1 = self.bottom_layer(x_1)
 
         x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
 
@@ -447,7 +432,7 @@ class Mirror_UNet(nn.Module):
         up_x_1 = []
         passed_common = False
         for i, up in enumerate(self.up_1[::-1]):
-            if i == len(self.channels) -2 - self.common_up_indices[0]:
+            if i == len(self.channels) - 2 - self.common_up_indices[0]:
 
                 for j, c_up in enumerate(self.common_ups[::-1]):
                     x_1 = torch.cat([c_up(x_1), down_x_1[-j - i - 2]], dim=1)
