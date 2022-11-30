@@ -455,11 +455,11 @@ class Mirror_UNet(nn.Module):
 
             if passed_common:
                 if len(down_x_1) < abs(-i -len(self.common_ups) - 2):
-                    break
+                    continue
                 x_1 = torch.cat([up(x_1), down_x_1[-i - len(self.common_ups) - 2]], dim=1)
             else:
                 if len(down_x_1) < abs(-i - 2):
-                    break
+                    continue
 
                 x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
         x_1 = self.up_1[0](x_1)
@@ -503,11 +503,11 @@ class Mirror_UNet(nn.Module):
                 passed_common = True
             if passed_common:
                 if len(down_x_2) < abs(-i -len(self.common_ups) - 2):
-                    break
+                    continue
                 x_2 = torch.cat([up(x_2), down_x_2[-i - len(self.common_ups) - 2]], dim=1)
             else:
                 if len(down_x_2) < abs(-i - 2):
-                    break
+                    continue
 
                 x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
 
