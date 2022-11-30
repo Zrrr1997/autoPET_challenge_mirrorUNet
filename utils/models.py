@@ -22,9 +22,6 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
                 in_channels=2,
                 features=(32, 64, 128, 256, 64)
             ).to(device)
-        elif args.comparison == 'spie':
-            print('here')
-            exit()
         else:
             net = UNet(
                 spatial_dims=3,
@@ -60,7 +57,13 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
             num_res_units=2,
             norm=Norm.BATCH,
             task=args.task,
-            args=args
+            gpu = args.gpu,
+            depth = args.depth,
+            level = args.level,
+            sliding_window = args.sliding_window,
+            separate_outputs = args.separate_outputs,
+            learnable_th_arg = args.learnable_th,
+            mirror_th = args.mirror_th
         ).to(device)
 
 

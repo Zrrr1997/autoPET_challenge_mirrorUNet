@@ -132,18 +132,12 @@ class Mirror_UNet(nn.Module):
         adn_ordering: str = "NDA",
         dimensions: Optional[int] = None,
         task: str = 'segmentation',
-        gpu = 0,
-        depth = 1,
-        level = 3,
-        task = 'segmentation',
-        sliding_window = False,
-        separate_outputs = False,
-        learnable_th_arg = False,
-        mirror_th = 0.3
+        args = None,
     ) -> None:
 
         super().__init__()
-
+        print(args)
+        exit()
         if len(channels) < 2:
             raise ValueError("the length of `channels` should be no less than 2.")
         delta = len(strides) - (len(channels) - 1)
@@ -174,14 +168,7 @@ class Mirror_UNet(nn.Module):
         self.bias = bias
         self.adn_ordering = adn_ordering
         self.task = task
-        self.gpu = gpu
-        self.depth = depth
-        self.level = level
-        self.task = task
-        self.sliding_window = sliding_window
-        self.separate_outputs = separate_outputs
-        self.mirror_th = mirror_th
-        self.learnable_th_arg = learnable_th_arg
+        self.args = args
         self.learnable_th = nn.Parameter(torch.tensor(0.5), requires_grad=True)
         print('Initial Threshold:', self.learnable_th)
 
@@ -198,28 +185,28 @@ class Mirror_UNet(nn.Module):
         self.dec = nn.ModuleList()
 
 
-        device = torch.device(f"cuda:{gpu}")
+        device = torch.device(f"cuda:{args.gpu}")
         self.device = device
         channel_list = [self.in_channels] + list(self.channels)
         out_c_list = [self.out_channels] + list(self.channels)
 
 
-        if self.depth == 1:
-            if self.level < 3:
-                offset = 2 - self.level
+        if self.args.depth == 1:
+            if self.args.level < 3:
+                offset = 2 - self.args.level
                 self.common_down_indices = [len(self.channels) - 2 - offset]
                 self.common_up_indices = [-1]
             else:
                 self.common_down_indices = [-1] # only bottom layer or upsampling layer
-                offset = self.level - 4
+                offset = self.args.level - 4
                 self.common_up_indices = [len(self.channels) - 2 - offset]
 
 
 
-        elif self.depth == 2:
+        elif args.depth == 2:
             self.common_down_indices = [len(self.channels) - 2]
             self.common_up_indices = [len(self.channels) - 2]
-        elif self.depth == 3:
+        elif args.depth == 3:
             self.common_down_indices = [len(self.channels) - 2, len(self.channels) - 3]
             self.common_up_indices = [len(self.channels) - 2, len(self.channels) - 3]
 
@@ -245,13 +232,14 @@ class Mirror_UNet(nn.Module):
                 up_in = channel_list[i + 1] * 2
 
 
-            if self.task in ['transference', 'fission', 'fission_classification'] and out_c_list[i] == 2:
+            if self.args.task in ['transference', 'fission', 'fission_classification'] and out_c_list[i] == 2:
                 if i in self.common_up_indices:
                     self.common_ups.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
 
                 else:
                     self.up_1.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
-
+                    #if self.args.task == 'fission':
+                    #    self.up_2.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
 
             else:
                 if i in self.common_up_indices:
@@ -264,7 +252,7 @@ class Mirror_UNet(nn.Module):
             if i not in self.common_up_indices: # and not (out_c_list[i] == 2 and self.args.task == 'fission'):
                 self.up_2.append(self._get_up_layer(up_in, out_c_list[i], 2, is_top).to(device))
 
-        if self.depth == 1 and self.level != 3: # only case where bottom layer is not shared
+        if self.args.depth == 1 and self.args.level != 3: # only case where bottom layer is not shared
             self.bottom_layer_1 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
             self.bottom_layer_2 = self._get_bottom_layer(self.channels[-2], self.channels[-1])
         else:
@@ -296,7 +284,7 @@ class Mirror_UNet(nn.Module):
                             bias=self.bias,
                             adn_ordering=self.adn_ordering,
                         ).to(device)
-                in_dense = 216 if self.sliding_window else 5000
+                in_dense = 216 if self.args.sliding_window else 5000
 
                 self.fc = nn.Sequential(nn.Flatten(),
                                         nn.Linear(in_dense, 256),
@@ -413,7 +401,7 @@ class Mirror_UNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # assume one channel for each modality
 
-        common_bottom = not (self.depth == 1 and self.level != 3)
+        common_bottom = not (self.args.depth == 1 and self.args.level != 3)
 
 
         x_1 = x[:,0].unsqueeze(dim=1) # CT
@@ -428,7 +416,7 @@ class Mirror_UNet(nn.Module):
             x_1 = d(x_1)
             down_x_1.append(x_1)
 
-        if (self.level == 2 and self.depth == 1) or self.depth >= 2:
+        if (self.args.level == 2 and self.args.depth == 1) or self.args.depth >= 2:
             for d in self.common_downs:
                 x_1 = d(x_1)
                 down_x_1.append(x_1)
@@ -439,8 +427,10 @@ class Mirror_UNet(nn.Module):
         else:
 
             bottom_x_1 = self.bottom_layer(x_1)
-
-        x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
+        if self.args.cut_ct_skip:
+            x_1 = torch.cat([bottom_x_1, 0 * down_x_1[-1]], dim=1)
+        else:
+            x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
 
 
 
@@ -450,7 +440,11 @@ class Mirror_UNet(nn.Module):
             if i == len(self.channels) -2 - self.common_up_indices[0]:
 
                 for j, c_up in enumerate(self.common_ups[::-1]):
-                    x_1 = torch.cat([c_up(x_1), down_x_1[-j - i - 2]], dim=1)
+                    if self.args.cut_ct_skip:
+                        #x_1 = c_up(x_1) # dead code
+                        x_1 = torch.cat([c_up(x_1), 0 * down_x_1[-j - i - 2]], dim=1)
+                    else:
+                        x_1 = torch.cat([c_up(x_1), down_x_1[-j - i - 2]], dim=1)
                 passed_common = True
 
             if passed_common:
@@ -460,8 +454,11 @@ class Mirror_UNet(nn.Module):
             else:
                 if len(down_x_1) < abs(-i - 2):
                     break
-
-                x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
+                if self.args.cut_ct_skip:
+                    #x_1 = up(x_1)
+                    x_1 = torch.cat([up(x_1), 0 * down_x_1[-i - 2]], dim=1)
+                else:
+                    x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
         x_1 = self.up_1[0](x_1)
 
 
@@ -477,7 +474,7 @@ class Mirror_UNet(nn.Module):
             x_2 = d(x_2)
             down_x_2.append(x_2)
 
-        if (self.level == 2 and self.depth == 1) or self.depth >= 2:
+        if (self.args.level == 2 and self.args.depth == 1) or self.args.depth >= 2:
             for d in self.common_downs:
                 x_2 = d(x_2)
                 down_x_2.append(x_2)
@@ -514,14 +511,14 @@ class Mirror_UNet(nn.Module):
         x_2 = self.up_2[0](x_2)
 
         x_3 = None
-        if self.task in ['fission', 'fission_classification']:
+        if self.args.task in ['fission', 'fission_classification']:
             x_3 = torch.cat([bottom_x_1, bottom_x_2], dim=1)
 
             for i, d in enumerate(self.dec):
                 x_3 = d(x_3)
 
         cls = None
-        if self.task == 'fission_classification':
+        if self.args.task == 'fission_classification':
             out = self.flatten_channels(bottom_x_2)
 
             cls = self.fc(out)
@@ -533,18 +530,18 @@ class Mirror_UNet(nn.Module):
 
 
     def process_output(self, x_1: torch.Tensor, x_2: torch.Tensor, x_3: torch.Tensor, cls: torch.Tensor) -> torch.Tensor:
-        if self.separate_outputs:
-            if self.task not in  ['fission', 'fission_classification']:
+        if self.args.separate_outputs:
+            if self.args.task not in  ['fission', 'fission_classification']:
                 return x_1, x_2
             else:
                 return x_1, x_3, x_2 # CT, PET, SEG
 
 
         if self.task == 'segmentation':
-            if self.learnable_th_arg:
+            if self.args.learnable_th:
                 out = torch.clamp(self.learnable_th, 0, 1) * x_1 + (1 - torch.clamp(self.learnable_th, 0, 1)) * x_2
             else:
-                out = self.mirror_th * x_1 + (1 - self.mirror_th) * x_2 # For decision fusion segmentation (exp_1)
+                out = self.args.mirror_th * x_1 + (1 - self.args.mirror_th) * x_2 # For decision fusion segmentation (exp_1)
 
             return out
         elif self.task == 'reconstruction' or self.task == 'transference':
