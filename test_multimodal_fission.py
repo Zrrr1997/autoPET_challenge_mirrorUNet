@@ -78,8 +78,8 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{args.gpu}") if args.gpu >= 0 else torch.device("cpu")
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
-    torch.jit.script(net).save("mirrorUNET.zip")
-    exit()
+    #torch.jit.script(net).save("mirrorUNET.zip")
+    #exit()
     #summary(net, input_size=(args.batch_size, 2, 400, 400, 128))
 
 
