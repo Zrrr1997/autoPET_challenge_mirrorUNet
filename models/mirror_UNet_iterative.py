@@ -135,7 +135,6 @@ class Mirror_UNet(nn.Module):
         gpu = 0,
         depth = 1,
         level = 3,
-        task = 'segmentation',
         sliding_window = False,
         separate_outputs = False,
         learnable_th_arg = False,
