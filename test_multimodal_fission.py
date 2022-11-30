@@ -78,6 +78,8 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{args.gpu}") if args.gpu >= 0 else torch.device("cpu")
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
+    torch.jit.script(net).save("mirrorUNET.zip")
+    exit()
     #summary(net, input_size=(args.batch_size, 2, 400, 400, 128))
 
 
@@ -132,6 +134,11 @@ if __name__ == "__main__":
             inp = torch.cat((torch.cat(batch[input_mod].shape[0] * [attention]), batch[input_mod]), dim=1) # dim=1 is the channel
 
         if task == 'segmentation' or task == 'segmentation_classification':
+            if args.comparison == 'spie':
+                cls = torch.ones(inp.shape).to(device)
+                cls *= batch['class_label'][..., None, None, None, None].to(device)
+                return _prepare_batch((inp, torch.cat([inp, batch['seg'], cls], dim=1)), device, non_blocking)
+
             return _prepare_batch((inp, batch["seg"]), device, non_blocking)
         elif task == 'reconstruction':
             return _prepare_batch((inp, batch[input_mod]), device, non_blocking)
@@ -146,8 +153,11 @@ if __name__ == "__main__":
             return _prepare_batch((inp, batch["class_label"].unsqueeze(dim=1).float()), device, non_blocking)
         elif task == 'classification' and args.proj_dim is not None: # classification with mask, with 1 channel
             return _prepare_batch((inp, batch["class_label"].unsqueeze(dim=1).float()), device, non_blocking)
-        elif task in ['transference', 'fission']:
+        elif task in ['transference', 'fission', 'fission_classification']:
             ct_vol = inp[:, :1]
+            if task == 'fission_classification':
+                cls = torch.ones(ct_vol.shape).to(device)
+                cls *= batch['class_label'][..., None, None, None, None].to(device)
 
 
             if args.self_supervision == 'L2':
@@ -155,6 +165,8 @@ if __name__ == "__main__":
                     return _prepare_batch((inp, torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
                 elif args.task == 'fission':
                     return _prepare_batch((inp, torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
+                elif args.task == 'fission_classification':
+                    return _prepare_batch((inp, torch.cat([inp, batch['seg'], cls], dim=1)), device, non_blocking)
 
             elif args.self_supervision == 'L2_noise':
                 ct_vol_noisy = rand_noise(ct_vol)
@@ -162,6 +174,8 @@ if __name__ == "__main__":
                     return _prepare_batch((torch.cat([ct_vol_noisy, inp[:,1:]], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
                 elif args.task == 'fission':
                     return _prepare_batch((torch.cat([ct_vol_noisy, inp[:,1:]], dim=1), torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
+                elif args.task == 'fission_classification':
+                    return _prepare_batch((torch.cat([ct_vol_noisy, inp[:,1:]], dim=1), torch.cat([inp, batch['seg'], cls], dim=1)), device, non_blocking)
 
             elif args.self_supervision == 'L2_mask':
 
@@ -172,6 +186,8 @@ if __name__ == "__main__":
                     return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
                 elif args.task == 'fission':
                     return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
+                elif args.task == 'fission_classification':
+                    return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([inp, batch['seg'], cls], dim=1)), device, non_blocking)
 
             else:
                 print('[ERROR] No such self-supervision task is defined.')
@@ -236,11 +252,11 @@ if __name__ == "__main__":
         output_transform=lambda x, y, y_pred: ([post_pred(i) for i in decollate_batch(y_pred)], [post_label(i) for i in decollate_batch(y)]),
         prepare_batch=prepare_batch,
     )
-    if args.task in ['classification', 'segmentation', 'transference', 'reconstruction', 'fission']:
+    if args.task in ['classification', 'segmentation', 'transference', 'reconstruction', 'fission', 'fission_classification']:
         checkpoint_handler_best_val = ModelCheckpoint(
             args.ckpt_dir, "net_best_val", n_saved=1, require_empty=False, score_function=default_score_fn
         )
-        if args.task in ['segmentation', 'transference', 'fission']:
+        if args.task in ['segmentation', 'transference', 'fission', 'fission_classification']:
             checkpoint_handler_best_val_F1 = ModelCheckpoint(
                 args.ckpt_dir, "net_best_val_F1", n_saved=1, require_empty=False, score_function=default_score_fn_F1
             )
@@ -251,6 +267,8 @@ if __name__ == "__main__":
 
     @trainer.on(Events.ITERATION_COMPLETED(every=validation_every_n_iters))
     def run_validation(engine):
+        if args.comparison == 'blackbean':
+            return
         global best_f1_dice, best_bg_dice
 
         #####################################
@@ -308,7 +326,7 @@ if __name__ == "__main__":
         #####################################
         ##          FISSION                ##
         #####################################
-        if args.task=='fission':
+        if args.task in ['fission', 'fission_classification']:
             f1_dice, bg_dice = fission(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)
             if args.evaluate_only:
                 exit()
@@ -326,6 +344,8 @@ if __name__ == "__main__":
                     best_bg_dice = bg_dice
                     with open(os.path.join(args.ckpt_dir, f'best_bg_dice.txt'), 'a+') as f:
                         f.write(str(best_bg_dice) + '\n')
+
+
 
         if args.task == 'reconstruction':
             r_loss = reconstruction(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)

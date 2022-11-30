@@ -77,7 +77,7 @@ def prepare_parser(parser):
     parser.add_argument('--load_keyword', type=str, default=None,
                              help='Keyword to search for in the weights file.')
     parser.add_argument('--task', type=str, default='segmentation',
-                         help='Training task for the model: [segmentation, reconstruction, classification, segmentation_classification, transference, co-learning]')
+                         help='Training task for the model: [segmentation, reconstruction, classification, segmentation_classification, transference, fission, fission_classification]')
     parser.add_argument('--early_fusion', default=False, action='store_true',
                          help='Train UNet with early fusion (channel concatenation).')
     parser.add_argument('--mask_attention', default=False, action='store_true',
@@ -118,6 +118,8 @@ def prepare_parser(parser):
                         help='Weight for the reconstruction loss in the transference (experiment 2).')
     parser.add_argument('--lambda_seg', type=float, default=0.5,
                         help='Weight for the segmentation loss in the transference (experiment 2).')
+    parser.add_argument('--lambda_cls', type=float, default=1e-2,
+                        help='Weight for the classification loss in the fission_classification (experiment 2).')
     parser.add_argument('--common_bottom', default=False, action='store_true',
                         help='Common bottom layer instead of common DOWN layer for Mirror UNet.')
     parser.add_argument('--self_supervision', type=str, default='L2',
@@ -126,8 +128,10 @@ def prepare_parser(parser):
                         help='Number of masks to use for the MAE in the transference (experiment 2).')
 
 
-
-
+    parser.add_argument('--comparison', type=str, default=None,
+                         help='Comparison to other methods')
+    parser.add_argument('--dataset', type=str, default='AutoPET',
+                         help='Dataset to use: [AutoPET, ACRIN].')
     # Utils
     parser.add_argument('--generate_mip', default=False, action='store_true',
                              help='Generate maximum intensity projections (MIPs).')

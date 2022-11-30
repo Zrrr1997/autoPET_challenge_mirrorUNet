@@ -92,10 +92,16 @@ class DiceCE_Rec_Loss(_Loss):
         self.lambda_ce = lambda_ce
         self.lambda_rec = lambda_rec
 
+
         self.post_label = AsDiscrete(to_onehot=2)
         self.post_pred = AsDiscrete(argmax=True, to_onehot=2)
 
         self.args = args
+        self.lambda_cls = self.args.lambda_cls
+
+
+        if self.args.task == 'fission_classification':
+            self.cls_loss = nn.BCELoss()
 
 
 
@@ -147,6 +153,25 @@ class DiceCE_Rec_Loss(_Loss):
             #exit()
             input_rec = input_ct_pet[:,:2].unsqueeze(1)
             target_rec = target_ct_seg[:,:2].unsqueeze(1)
+
+            input_cls = torch.zeros(input.shape)
+            target_cls = torch.zeros(input.shape)
+        elif self.args.task == 'fission_classification':
+            input = input_ct_pet[:, 2:4]
+            target = target_ct_seg[:, 2:3]
+
+            input_rec = input_ct_pet[:,:2].unsqueeze(1)
+            target_rec = target_ct_seg[:,:2].unsqueeze(1)
+
+            input_cls = input_ct_pet[:, 4:]
+            input_cls = torch.stack([torch.mean(el) for el in input_cls])
+            target_cls = target_ct_seg[:, 3:]
+            if self.args.sliding_window:
+                target_cls = torch.stack([torch.max(el) for el in target]) # patch-wise classification
+            else:
+                target_cls = torch.stack([torch.mean(el) for el in target_cls])
+
+
         else:
             print(f'[ERROR] No such task implemented for this loss {self.args.task}')
             exit()
@@ -163,5 +188,9 @@ class DiceCE_Rec_Loss(_Loss):
 
 
         total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_dice * ce_loss + self.lambda_rec * rec_loss
+
+        if self.args.task == 'fission_classification':
+            cls_err = self.cls_loss(input_cls, target_cls)
+            total_loss += self.lambda_cls * cls_err
 
         return total_loss

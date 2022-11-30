@@ -27,9 +27,13 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
         return 1.0
 
 
-    # IKIM CV-splits
-    df_cv = pd.read_csv('data/autopet_5folds_augmented.csv')
-    df_cv['study_location'] = df_cv['study_location'].str.replace('/projects/datashare/tio/autopet/FDG-PET-CT-Lesions/', in_dir)
+
+    if args.dataset == 'AutoPET':
+        df_cv = pd.read_csv('data/autopet_5folds_augmented.csv')
+        df_cv['study_location'] = df_cv['study_location'].str.replace('/projects/datashare/tio/autopet/FDG-PET-CT-Lesions/', in_dir)
+    else:
+        df_cv = pd.read_csv('data/acrin_5folds_augmented.csv')
+
 
     if not args.with_negatives:
         df_cv_train = df_cv[(df_cv['kfold'] != args.fold) & (df_cv['diagnosis'] != 'NEGATIVE')]
@@ -38,6 +42,7 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
         df_cv_train = df_cv[df_cv['kfold'] != args.fold]
         df_cv_val = df_cv[df_cv['kfold'] == args.fold]
     negative_fns = df_cv[df_cv['diagnosis'] == 'NEGATIVE']['study_location'].to_numpy()
+
 
     path_train_files = df_cv_train['study_location'].to_numpy()
     path_val_files = df_cv_val['study_location'].to_numpy()
@@ -51,6 +56,9 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
     path_CT_scans_val = [os.path.join(el, 'CTres.nii.gz') for el in path_val_files]
     path_PET_scans_val = [os.path.join(el, 'SUV.nii.gz') for el in path_val_files]
     path_SEG_scans_val = [os.path.join(el, 'SEG.nii.gz') for el in path_val_files]
+
+
+
 
     # Tumor / No-tumor classes
     train_class_labels = [class_label(el, negative_fns) for el in path_CT_scans_train]
@@ -215,10 +223,19 @@ def prepare_loaders(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPE
                 task_cache_dir = task_cache_dir.replace('transference', 'segmentation') # Segmentation and Transference tasks should share the cache dir
             if args.task == 'fission':
                 task_cache_dir = task_cache_dir.replace('fission', 'segmentation') # Segmentation and Transference tasks should share the cache dir
+            if args.task == 'fission_classification':
+                task_cache_dir = task_cache_dir.replace('fission_classification', 'segmentation') # Segmentation and Transference tasks should share the cache dir
             if args.task == 'reconstruction':
                 task_cache_dir = task_cache_dir.replace('reconstruction', 'segmentation') # Segmentation and Reconstruction tasks should share the cache dir
             if args.debug:
                 task_cache_dir = os.path.join(task_cache_dir, 'debug')
+            if args.with_negatives:
+                task_cache_dir = os.path.join(task_cache_dir, 'with_negatives')
+            if args.comparison == 'blackbean':
+                task_cache_dir = os.path.join(task_cache_dir, args.comparison)
+            if args.dataset == 'ACRIN':
+                task_cache_dir = os.path.join(task_cache_dir, args.dataset)
+
             print(f"Using cache directory: {task_cache_dir}")
             train_ds = PersistentDataset(data=train_files, transform=train_transforms, cache_dir=os.path.join(task_cache_dir, 'train'))
             if args.debug:

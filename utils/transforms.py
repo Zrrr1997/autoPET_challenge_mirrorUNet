@@ -19,6 +19,8 @@ from monai.transforms import(
     RandScaleIntensityd,
     RandFlipd,
     EnsureTyped,
+    ScaleIntensity,
+    RandAdjustContrastd,
     Compose
 )
 
@@ -41,6 +43,77 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
         pos_freqs = {'x': 0.7, 'y': 0.65, 'z': 0.7, 'all_mips': 0.0} # only for sliding window classfication
         pos_freq = pos_freqs[args.proj_dim]
 
+    if args.comparison == 'blackbean':
+            train_transforms = Compose(
+                [
+                    LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
+                    AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
+                    Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=[1.5, 1.0182, 1.0182], mode=("bilinear", "bilinear", "nearest")),
+                    Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
+                    ScaleIntensityd(keys=["ct_vol"], minv=0, maxv=1),
+                    ScaleIntensityd(keys=["pet_vol"], minv=0, maxv=1),
+                    ConcatItemsd(keys=["ct_vol", "pet_vol"], name="ct_pet_vol", dim=0),  # concatenate pet and ct channels
+                    EnsureTyped(keys=["ct_pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}"), track_meta=False),
+                    RandSpatialCropd(keys=["ct_pet_vol", "seg"], roi_size=(192, 192, 192), random_size=False),
+                    RandScaleIntensityd(keys=["ct_pet_vol"], prob=1.0, factors=[-0.25, 0.25]),
+                    RandAdjustContrastd(keys=["ct_pet_vol"], prob=0.3, gamma=(0.7, 1.5)),
+                    RandRotated(keys=["ct_pet_vol", "seg"], range_x=np.pi / 12, range_y=np.pi / 12, range_z=np.pi / 12, prob=1.0),
+                    RandFlipd(keys=["ct_pet_vol", "seg"], prob=0.5, spatial_axis=0),
+                    RandFlipd(keys=["ct_pet_vol", "seg"], prob=0.5, spatial_axis=1),
+                    RandFlipd(keys=["ct_pet_vol", "seg"], prob=0.5, spatial_axis=2),
+                    ToTensord(keys=["seg", "ct_pet_vol", "class_label"]),
+                ]
+            )
+
+            val_transforms = Compose(
+                [
+                    LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
+                    AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
+                    Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=[1.5, 1.0182, 1.0182], mode=("bilinear", "bilinear", "nearest")),
+                    Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
+                    ScaleIntensityRanged(keys=["ct_vol"], a_min=a_min_ct, a_max=a_max_ct, b_min=0.0, b_max=1.0, clip=False),
+                    ScaleIntensityd(keys=["pet_vol"], minv=0, maxv=1),
+                    ConcatItemsd(keys=["ct_vol", "pet_vol"], name="ct_pet_vol", dim=0),  # concatenate pet and ct channels
+                    EnsureTyped(keys=["ct_pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}"), track_meta=False),
+                    RandSpatialCropd(keys=["ct_pet_vol", "seg"], roi_size=(192, 192, 192), random_size=False),
+                    ToTensord(keys=["seg", "ct_pet_vol", "class_label"]),
+                ]
+            )
+            return train_transforms, val_transforms
+    if args.dataset == 'ACRIN':
+            train_transforms = Compose(
+                [
+                    LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
+                    AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
+                    Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=[2.0364, 2.0364, 3.0], mode=("bilinear", "bilinear", "nearest")),
+                    Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
+                    ScaleIntensityRanged(keys=["ct_vol"], a_min=a_min_ct, a_max=a_max_ct, b_min=0.0, b_max=1.0, clip=False),
+                    #ScaleIntensityRanged(keys=["pet_vol"], a_min=a_min_pet, a_max=a_max_pet, b_min=0.0, b_max=1.0, clip=False),
+                    Resized(keys=["ct_vol", "pet_vol"], spatial_size=spatial_size),
+                    Resized(keys=["seg"], spatial_size=spatial_size, mode="nearest-exact"),
+                    ConcatItemsd(keys=["ct_vol", "pet_vol"], name="ct_pet_vol", dim=0),  # concatenate pet and ct channels
+                    EnsureTyped(keys=["ct_pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}"), track_meta=False),
+                    ToTensord(keys=["seg", "ct_pet_vol", "class_label"]),
+                ]
+            )
+
+            val_transforms = Compose(
+                [
+                    LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
+                    AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
+                    Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=[2.0364, 2.0364, 3.0], mode=("bilinear", "bilinear", "nearest")),
+                    Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
+                    ScaleIntensityd(keys=["ct_vol"], minv=0, maxv=1),
+                    ScaleIntensityRanged(keys=["pet_vol"], a_min=8.0, a_max=60000, b_min=0.0, b_max=1.0, clip=False),
+                    Resized(keys=["ct_vol", "pet_vol"], spatial_size=spatial_size),
+                    Resized(keys=["seg"], spatial_size=spatial_size, mode="nearest-exact"),
+                    ConcatItemsd(keys=["ct_vol", "pet_vol"], name="ct_pet_vol", dim=0),  # concatenate pet and ct channels
+                    EnsureTyped(keys=["ct_pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}"), track_meta=False),
+                    ToTensord(keys=["seg", "ct_pet_vol", "class_label"]),
+                ]
+            )
+            return train_transforms, val_transforms
+
     # Just generate MIP
     if args.generate_mip:
         train_transforms = Compose(
@@ -57,7 +130,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             ]
         )
     # Sliding Window Segmentation or Transference without DA
-    elif args.task in ['segmentation', 'transference', 'fission','reconstruction'] and args.sliding_window and not args.with_DA:
+    elif args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] and args.sliding_window and not args.with_DA:
         if args.single_mod is None: # ct_pet_vol
             train_transforms = Compose(
                 [
@@ -194,7 +267,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             print(f"[ERROR] Wrong input modality!")
             exit()
     # Normal Segmentation or Transference (without DA)
-    elif (args.task in ['segmentation', 'transference', 'fission', 'reconstruction'] or args.class_backbone == 'Ensemble') and not args.with_DA:
+    elif (args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] or args.class_backbone == 'Ensemble') and not args.with_DA:
         if args.single_mod is None: # input_mod == ct_pet_vol
             train_transforms = Compose(
                 [
@@ -246,7 +319,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             print(f"[ERROR] Wrong input modality!")
             exit()
     # Normal Segmentation or Transference (with DA)
-    elif (args.task in ['segmentation', 'transference', 'fission', 'reconstruction'] or args.class_backbone == 'Ensemble') and args.with_DA:
+    elif (args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] or args.class_backbone == 'Ensemble') and args.with_DA:
         print("Using transforms WITH data augmentation.")
         if args.single_mod is None: # input_mod == ct_pet_vol
             train_transforms = Compose(
@@ -352,7 +425,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
     ### VALIDATION ###
     ##################
     # Normal Segmentation or Transference
-    if (args.task in ['segmentation', 'transference', 'fission', 'reconstruction'] or args.class_backbone == 'Ensemble') and not args.sliding_window:
+    if (args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] or args.class_backbone == 'Ensemble') and not args.sliding_window:
         if args.single_mod is None: # input_mod == ct_pet_vol
             val_transforms= Compose(
                 [
@@ -410,7 +483,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
         else:
             print(f"[ERROR] Wrong input modality!")
             exit()
-    elif (args.task in ['segmentation', 'transference', 'fission', 'reconstruction'] or args.class_backbone == 'Ensemble') and args.sliding_window:
+    elif (args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] or args.class_backbone == 'Ensemble') and args.sliding_window:
         if args.single_mod is None: # input_mod == ct_pet_vol
             val_transforms= Compose(
                 [
@@ -478,4 +551,5 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
     else:
         print("Unsupported val transforms...")
         exit()
+
     return train_transforms, val_transforms

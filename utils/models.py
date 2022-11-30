@@ -7,6 +7,7 @@ from models.efficient_net import EfficientNet
 from models.ensemble import Ensemble
 from models.coatnet import coatnet_0, coatnet_1, coatnet_2, coatnet_3, coatnet_4
 from monai.networks.layers import Norm
+from models.basicunet import BasicUNet
 import torch.nn as nn
 import os
 
@@ -16,14 +17,14 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
     if (args.single_mod is not None or args.early_fusion) and args.task != 'classification' and args.class_backbone != 'Ensemble':
         in_channels = 2 if args.early_fusion and args.load_weights_second_model is None else 1
         in_channels = in_channels + 1 if args.mask_attention else in_channels
-        if args.attention_UNet: # TODO: Implement for MirrorUNet if the backbone works at all
-            net = AttentionUnet(
-                spatial_dims=3,
-                in_channels=in_channels,
-                out_channels=out_channels,
-                channels=(16, 32, 64, 128, 256),
-                strides=(2,2,2,2),
+        if args.comparison == 'blackbean': # TODO: Implement for MirrorUNet if the backbone works at all
+            net = BasicUNet(spatial_dims=3,
+                in_channels=2,
+                features=(32, 64, 128, 256, 64)
             ).to(device)
+        elif args.comparison == 'spie':
+            print('here')
+            exit()
         else:
             net = UNet(
                 spatial_dims=3,

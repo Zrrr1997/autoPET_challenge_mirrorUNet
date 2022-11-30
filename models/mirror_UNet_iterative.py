@@ -136,7 +136,8 @@ class Mirror_UNet(nn.Module):
     ) -> None:
 
         super().__init__()
-
+        print(args)
+        exit()
         if len(channels) < 2:
             raise ValueError("the length of `channels` should be no less than 2.")
         delta = len(strides) - (len(channels) - 1)
@@ -185,6 +186,7 @@ class Mirror_UNet(nn.Module):
 
 
         device = torch.device(f"cuda:{args.gpu}")
+        self.device = device
         channel_list = [self.in_channels] + list(self.channels)
         out_c_list = [self.out_channels] + list(self.channels)
 
@@ -230,7 +232,7 @@ class Mirror_UNet(nn.Module):
                 up_in = channel_list[i + 1] * 2
 
 
-            if self.args.task in ['transference', 'fission'] and out_c_list[i] == 2:
+            if self.args.task in ['transference', 'fission', 'fission_classification'] and out_c_list[i] == 2:
                 if i in self.common_up_indices:
                     self.common_ups.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
 
@@ -256,8 +258,9 @@ class Mirror_UNet(nn.Module):
         else:
             self.bottom_layer = self._get_bottom_layer(self.channels[-2], self.channels[-1])
 
+        class_bottleneck_size = self.channels[-1]
 
-        if self.task == 'fission':
+        if self.task in ['fission', 'fission_classification']:
             dec_channels = out_c_list[:-2]
             for i, c in enumerate(dec_channels[::-1]):
                 c_out = 1 if c == 2 else c
@@ -267,6 +270,29 @@ class Mirror_UNet(nn.Module):
                     self.dec.append(self._get_up_layer(2 * self.channels[-1], c_out, 2, False).to(device))
                 else:
                     self.dec.append(self._get_up_layer(dec_channels[::-1][i - 1], c_out, 2, False).to(device))
+
+        if self.task == 'fission_classification':
+                self.flatten_channels = Convolution(
+                            self.dimensions,
+                            class_bottleneck_size,
+                            1,
+                            strides=1,
+                            kernel_size=1,
+                            act=self.act,
+                            norm=self.norm,
+                            dropout=self.dropout,
+                            bias=self.bias,
+                            adn_ordering=self.adn_ordering,
+                        ).to(device)
+                in_dense = 216 if self.args.sliding_window else 5000
+
+                self.fc = nn.Sequential(nn.Flatten(),
+                                        nn.Linear(in_dense, 256),
+                                        nn.ReLU(),
+                                        nn.Dropout(p=0.5),
+                                        nn.Linear(256, 1),
+                                        nn.Sigmoid()
+                                        ).to(device)
 
 
 
@@ -485,21 +511,27 @@ class Mirror_UNet(nn.Module):
         x_2 = self.up_2[0](x_2)
 
         x_3 = None
-        if self.args.task == 'fission':
+        if self.args.task in ['fission', 'fission_classification']:
             x_3 = torch.cat([bottom_x_1, bottom_x_2], dim=1)
 
             for i, d in enumerate(self.dec):
                 x_3 = d(x_3)
 
+        cls = None
+        if self.args.task == 'fission_classification':
+            out = self.flatten_channels(bottom_x_2)
 
-        return self.process_output(x_1, x_2, x_3)
+            cls = self.fc(out)
+
+
+        return self.process_output(x_1, x_2, x_3, cls)
 
 
 
 
-    def process_output(self, x_1: torch.Tensor, x_2: torch.Tensor, x_3: torch.Tensor) -> torch.Tensor:
+    def process_output(self, x_1: torch.Tensor, x_2: torch.Tensor, x_3: torch.Tensor, cls: torch.Tensor) -> torch.Tensor:
         if self.args.separate_outputs:
-            if self.args.task != 'fission':
+            if self.args.task not in  ['fission', 'fission_classification']:
                 return x_1, x_2
             else:
                 return x_1, x_3, x_2 # CT, PET, SEG
@@ -516,9 +548,15 @@ class Mirror_UNet(nn.Module):
 
             x_12 = torch.cat((x_1, x_2), dim=1)
             return x_12
-        elif self. task == 'fission':
+        elif self.task == 'fission':
             x_123 = torch.cat((x_1, x_3, x_2), dim=1)
             return x_123
+        elif self.task == 'fission_classification':
+            x_4 = torch.ones(x_1.shape).to(self.device)
+            x_4 *= cls[..., None, None, None]
+            x_1234 = torch.cat((x_1, x_3, x_2, x_4), dim=1)
+
+            return x_1234
         else:
             raise ValueError(f"Task {self.task} is not supported!")
 

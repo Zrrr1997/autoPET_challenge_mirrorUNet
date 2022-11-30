@@ -27,10 +27,11 @@ from loss.dice_ce_rec_class import DiceCE_Rec_Class_Loss
 
 
 def prepare_out_channels(args):
-    out_channels = 2 if args.task in ['segmentation', 'segmentation_classification', 'transference', 'fission'] or args.early_fusion else 1
+    out_channels = 2 if args.task in ['segmentation', 'segmentation_classification', 'transference', 'fission', 'fission_classification'] or args.early_fusion else 1
 
     print('Number of output channels', out_channels)
     return out_channels
+
 
 def prepare_input_mod(args):
     input_mod = "ct_pet_vol" if args.single_mod is None or args.early_fusion else args.single_mod
@@ -74,7 +75,7 @@ def prepare_loss(args):
         loss = torch.nn.MSELoss()
     elif args.task == 'classification':
         loss = torch.nn.BCELoss()
-    elif args.task in ['transference', 'fission']:
+    elif args.task in ['transference', 'fission', 'fission_classification']:
         loss = DiceCE_Rec_Loss(to_onehot_y=True, softmax=True, include_background=args.include_background, batch=True, lambda_rec=args.lambda_rec, lambda_ce=args.lambda_seg, lambda_dice=args.lambda_seg, args=args)
         print('Using DiceCE loss with reconstruction.')
     elif args.task == 'multi-task': # TODO
@@ -99,7 +100,7 @@ def class_label(ct_path, neg_paths):
     return 1.0
 
 def prepare_val_metrics(args):
-    if args.task in ['segmentation', 'segmentation_classification', 'transference', 'fission']:
+    if args.task in ['segmentation', 'segmentation_classification', 'transference', 'fission', 'fission_classification']:
         metric_name = "Mean_Dice_F1"
         metric_name_2 = "Mean_Dice"
         val_metrics = {metric_name: MeanDice(include_background=False), metric_name_2: MeanDice()}
@@ -119,8 +120,8 @@ def transference_post_pred(x):
     num_classes=2
     discrete = AsDiscrete(argmax=True, to_onehot=num_classes)
     #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
-    return discrete(x)
-    #return discrete(x[1:,:])
+    #return discrete(x) # only for args.save_nifti == True
+    return discrete(x[1:,:])
 
 
 def transference_post_label(x):
@@ -134,7 +135,7 @@ def fission_post_pred(x):
     discrete = AsDiscrete(argmax=True, to_onehot=num_classes)
     #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
     if x.shape[0] > 2:
-        return discrete(x[2:,:])
+        return discrete(x[2:4,:])
     else:
         return discrete(x)
 
@@ -144,9 +145,15 @@ def fission_post_label(x):
     discrete = AsDiscrete(to_onehot=num_classes)
     #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
     if x.shape[0] > 2:
-        return discrete(x[2:,:])
+        return discrete(x[2:4,:])
     else:
         return discrete(x)
+
+def fission_cls_post_label(x):
+    num_classes=2
+    discrete = AsDiscrete(to_onehot=num_classes)
+    #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
+    return discrete(x[2:3,:])
 
 
 def prepare_post_fns(args):
@@ -163,9 +170,13 @@ def prepare_post_fns(args):
     elif args.task == 'transference':
         post_pred = Lambda(func=lambda x: transference_post_pred(x))
         post_label = Lambda(func=lambda x: transference_post_label(x))
-    elif args.task == 'fission':
+    elif args.task in ['fission', 'fission_classification']:
         post_pred = Lambda(func=lambda x: fission_post_pred(x))
-        post_label = Lambda(func=lambda x: fission_post_label(x))
+        if args.task == 'fission_classification':
+            post_label = Lambda(func=lambda x: fission_cls_post_label(x))
+        else:
+            post_label = Lambda(func=lambda x: fission_post_label(x))
+
     else:
         print('[ERROR] post_pred and post_label cannot be created for this task.')
         exit()

@@ -4,6 +4,8 @@ import os
 import numpy as np
 from tqdm import tqdm
 import nibabel as nib
+import cc3d
+
 
 from ignite.engine import (
     _prepare_batch,
@@ -16,6 +18,7 @@ from monai.metrics import compute_meandice, compute_meaniou
 from monai.visualize import GradCAM
 from monai.transforms import Resize, AddChannel, RandGaussianNoise, RandCoarseShuffle
 import torch.nn.functional as nnf
+from matplotlib import pyplot as plt
 
 def f_class_label(class_label, batch):
     if class_label != 0:
@@ -24,6 +27,37 @@ def f_class_label(class_label, batch):
         class_label = torch.zeros(batch['ct_vol'].shape[1:])
     return class_label
 
+def con_comp(seg_array):
+    # input: a binary segmentation array output: an array with seperated (indexed) connected components of the segmentation array
+    connectivity = 18
+    conn_comp = cc3d.connected_components(seg_array, connectivity=connectivity)
+    return conn_comp
+
+
+def false_pos_pix(gt_array,pred_array):
+    # compute number of voxels of false positive connected components in prediction mask
+    pred_conn_comp = con_comp(pred_array)
+
+    false_pos = 0
+    for idx in range(1,pred_conn_comp.max()+1):
+        comp_mask = np.isin(pred_conn_comp, idx)
+        if (comp_mask*gt_array).sum() == 0:
+            false_pos = false_pos+comp_mask.sum()
+    return false_pos
+
+
+
+def false_neg_pix(gt_array,pred_array):
+    # compute number of voxels of false negative connected components (of the ground truth mask) in the prediction mask
+    gt_conn_comp = con_comp(gt_array)
+
+    false_neg = 0
+    for idx in range(1,gt_conn_comp.max()+1):
+        comp_mask = np.isin(gt_conn_comp, idx)
+        if (comp_mask*pred_array).sum() == 0:
+            false_neg = false_neg+comp_mask.sum()
+
+    return false_neg
 
 # Auxiliary method to load (sample, label) depending on the task and configuration
 def prepare_batch(batch, args, device=None, non_blocking=False, input_mod=None):
@@ -57,29 +91,6 @@ def prepare_batch(batch, args, device=None, non_blocking=False, input_mod=None):
             ct_vol_shuffled = rand_shuffle(ct_vol)
             return _prepare_batch((torch.cat([ct_vol_shuffled, inp[:,1:], ct_vol], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
 
-
-            '''
-            non_zeros = torch.nonzero(ct_vol)
-            x_max = torch.max(non_zeros[:,2]).cpu().detach().numpy()
-            x_min = torch.min(non_zeros[:,2]).cpu().detach().numpy()
-            y_max = torch.max(non_zeros[:,3]).cpu().detach().numpy()
-            y_min = torch.min(non_zeros[:,3]).cpu().detach().numpy()
-            z_max = torch.max(non_zeros[:,4]).cpu().detach().numpy()
-            z_min = torch.min(non_zeros[:,4]).cpu().detach().numpy()
-            x_scale = x_max - x_min
-            y_scale = y_max - y_min
-            z_scale = z_max - z_min
-
-            n_masks = args.n_masks
-            for i in range(n_masks):
-                x = np.random.randint((x_min + 8) + x_scale / 4, (x_max - 8) - (x_scale / 4))
-                y = np.random.randint((y_min + 8) + y_scale / 4, (y_max - 8) - (y_scale / 4))
-                z = np.random.randint((z_min + 8) + z_scale / 12, (z_max - 8) - (z_scale / 12))
-                mask = torch.ones(ct_vol.shape).to(device)
-                mask[:,:, x-8:x+8, y-8:y+8, z-8:z+8] *= 0
-
-                ct_vol *= mask
-            '''
         elif args.self_supervision == 'L2_noise':
             rand_noise = RandGaussianNoise(prob=1.0, std=0.3)
             ct_vol_noisy = rand_noise(ct_vol)
@@ -88,14 +99,28 @@ def prepare_batch(batch, args, device=None, non_blocking=False, input_mod=None):
         return _prepare_batch((inp, torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
         #return _prepare_batch((inp, torch.cat([batch['ct_vol'], batch['seg']], dim=1)), device, non_blocking)
     elif task == 'fission':
-            # TODO; for multi-task
-            #ct_vol = inp[:, :1]
+        ct_vol = inp[:, :1]
+        if args.self_supervision == 'L2_mask':
+            rand_shuffle = RandCoarseShuffle(prob=1.0, spatial_size=16, holes=args.n_masks)
 
-            #class_labels = batch['class_label'] # TODO: Maybe this is inefficient and redundant
-            #class_label = torch.stack([f_class_label(el, batch) for el in class_labels]).to(device)
 
-            #return _prepare_batch((inp, torch.cat([ct_vol, batch['seg'], class_label], dim=1)), device, non_blocking)
-            return _prepare_batch((inp, torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
+            ct_vol_shuffled = rand_shuffle(ct_vol)
+            return _prepare_batch((torch.cat([ct_vol_shuffled, inp[:,1:]], dim=1), torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
+        return _prepare_batch((inp, torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
+    elif task == 'fission_classification':
+        ct_vol = inp[:, :1]
+        cls = torch.ones(ct_vol.shape).to(device)
+        cls *= batch['class_label'][..., None, None, None, None].to(device)
+        if args.self_supervision == 'L2_mask':
+            rand_shuffle = RandCoarseShuffle(prob=1.0, spatial_size=16, holes=args.n_masks)
+
+
+            ct_vol_shuffled = rand_shuffle(ct_vol)
+            return _prepare_batch((torch.cat([ct_vol_shuffled, inp[:,1:]], dim=1), torch.cat([inp, batch['seg'], cls], dim=1)), device, non_blocking)
+
+        return _prepare_batch((inp, torch.cat([inp, batch['seg'], cls], dim=1)), device, non_blocking)
+
+
 
     else:
         print("[ERROR]: No such task exists...")
@@ -126,15 +151,21 @@ def classification(evaluator, val_loader, net, args, device, input_mod=None):
     return
 
 def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device, input_mod=None, trainer=None, writer=None):
-    if not args.sliding_window and not args.save_nifti:
+    if not args.sliding_window and not args.save_nifti and not args.dataset == 'ACRIN':
         evaluator.run(val_loader)
     dices_bg, dices_fg = [], []
     net.eval()
 
+    fp, fn = [],[]
 
     with torch.no_grad():
         for i, val_data in tqdm(enumerate(val_loader)):
             (inp, label) = prepare_batch(val_data, args, device=device, input_mod=input_mod)
+
+
+            label = (label > 0) * 1.0
+
+
 
             if args.sliding_window:
                 roi_size = (96, 96, 96)
@@ -146,27 +177,20 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
             if args.save_nifti:
                 save_nifti(inp, device, out, args, post_pred, post_label, label)
             out = torch.stack([post_pred(i) for i in decollate_batch(out)])
+
             label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
-
-            if args.save_eval_img and i == 0:
-                label = torch.Tensor(label.cpu().detach().numpy()).to(device)
-                if args.separate_outputs:
-                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PRED CT', torch.cat([out_ct[0][1:] * 255]), 128)
-                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PET', torch.cat([inp[0][1:] * 255]), 128)
-                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PRED PET', torch.cat([out_pet[0][1:] * 255]), 128)
-                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PRED FUSED', torch.cat([out_fused[0][1:] * 255]), 128)
-                else:
-                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'GT', torch.cat([label[0][1:] * 255]), 128)
-                    monai.visualize.img2tensorboard.add_animated_gif(writer, 'PRED', torch.cat([out[0][1:] * 255]), 128)
-
+            fp.append(false_pos_pix(label[0][1].cpu().detach().numpy(), out[0][1].cpu().detach().numpy()))
+            fn.append(false_neg_pix(label[0][1].cpu().detach().numpy(), out[0][1].cpu().detach().numpy()))
             if not args.separate_outputs:
                 dice = compute_meandice(out, label, include_background=True)
                 dice_F1 = compute_meandice(out, label, include_background=False)
 
+
                 dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
                 dices_bg += list(dice.cpu().detach().numpy().flatten())
-
+    print('False Positives', np.mean(fp))
+    print('False Negatives', np.mean(fn))
     f1_dice = np.mean(np.array(dices_fg))
     bg_dice = np.mean(np.array(dices_bg))
     if args.learnable_th:
@@ -182,15 +206,34 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
 
 def transference(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=None, writer=None, trainer=None):
 
-    if not args.sliding_window and not args.save_nifti:
+    if not args.sliding_window and not args.save_nifti and not args.dataset == 'ACRIN' and False:
         evaluator.run(val_loader)
 
     dices_fg, dices_bg, rec_loss = [], [], []
+    pet_vals = []
     net.eval()
+    fp, fn = [],[]
     with torch.no_grad():
         for i, val_data in tqdm(enumerate(val_loader)):
             (inp, label) = prepare_batch(val_data, args, device=device, input_mod=input_mod)
 
+            label_seg = (label[:,1:] > 0) * 1.0
+            label = torch.concat([label[:,:1], label_seg], dim=1)
+
+            if args.dataset == 'ACRIN' and False:
+
+                pet = inp[:, 1].unsqueeze(1)
+                pet *= label
+                pet = list(pet.cpu().detach().numpy().flatten())
+                pet = [el  for el in pet if el != 0]
+                for el in pet:
+                    pet_vals.append(el)
+                print('mean:', np.mean(pet_vals), np.min(pet_vals), np.max(pet_vals))
+                plt.hist(pet_vals)
+                plt.savefig('pet_vals.png')
+                plt.clf()
+                plt.close()
+                continue
 
             if args.sliding_window:
                 roi_size = (96, 96, 96)
@@ -212,17 +255,26 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
 
 
 
+
             mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
+
             label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
-            dice = compute_meandice(mask_out, label, include_background=True)
-            dice_F1 = compute_meandice(mask_out, label, include_background=False)
+            #fp.append(false_pos_pix(label[0][1].cpu().detach().numpy(), mask_out[0][1].cpu().detach().numpy()))
+            #fn.append(false_neg_pix(label[0][1].cpu().detach().numpy(), mask_out[0][1].cpu().detach().numpy()))
+
+            dice = compute_meandice(mask_out, label, include_background=True, ignore_empty=False)
+            dice_F1 = compute_meandice(mask_out, label, include_background=False, ignore_empty=False)
+
 
             dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
             dices_bg += list(dice.cpu().detach().numpy().flatten())
-
-
-
+    #print('False Positives', np.mean(fp))
+    #print('False Negatives', np.mean(fn))
+    if args.dataset == 'ACRIN' and False:
+        plt.hist(pet_vals)
+        plt.savefig('pet_vals.png')
+        exit()
 
     dice_F1 = np.mean(np.array(dices_fg))
     dice_bg = np.mean(np.array(dices_bg))
@@ -242,6 +294,7 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
 
     if not args.sliding_window and not args.save_nifti:
         evaluator.run(val_loader)
+    fp, fn = [],[]
 
     dices_fg, dices_bg, rec_loss = [], [], []
     class_pred, class_label = [], []
@@ -261,6 +314,16 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
                 save_nifti(inp, device, mask_out, args, post_pred, post_label, label)
             recon_out = mask_out[:, :2]
 
+            if args.task == 'fission_classification':
+                cls_out = mask_out[:, 4:]
+                cls_out = torch.stack([torch.mean(el) for el in cls_out]).cpu().detach().numpy() # Does not evaluate sliding_window properly
+
+                cls_gt = label[:, 3:]
+                cls_gt = torch.stack([torch.mean(el) for el in cls_gt]).cpu().detach().numpy()
+                for j, el in enumerate(cls_out):
+                    class_pred.append((el > 0.5) * 1.0)
+                    class_label.append(cls_gt[j])
+
             rec_loss.append(torch.mean(torch.abs(inp[:, :2] - recon_out)).cpu().detach().numpy())
 
 
@@ -277,13 +340,17 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
             mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
             label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
+            fp.append(false_pos_pix(label[0][1].cpu().detach().numpy(), mask_out[0][1].cpu().detach().numpy()))
+            fn.append(false_neg_pix(label[0][1].cpu().detach().numpy(), mask_out[0][1].cpu().detach().numpy()))
+
             dice = compute_meandice(mask_out, label, include_background=True)
             dice_F1 = compute_meandice(mask_out, label, include_background=False)
 
             dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
             dices_bg += list(dice.cpu().detach().numpy().flatten())
 
-
+    print('False Positives', np.mean(fp))
+    print('False Negatives', np.mean(fn))
     dice_F1 = np.mean(np.array(dices_fg))
     dice_bg = np.mean(np.array(dices_bg))
     r_loss = np.mean(np.array(rec_loss))
@@ -412,7 +479,7 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
     affine[0][0] = -1
     spatial_size = (400, 400, 384)
     if args.separate_outputs:
-        if args.task != 'fission':
+        if args.task not in ['fission', 'fission_classification']:
             (out_ct, out_pet) = out
         else:
             (out_ct, out_pet, out_seg) = out
@@ -421,10 +488,10 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
             out_fused = convert_output(out_fused, device, spatial_size, add_channel)
 
 
-        if args.task not in ['transference', 'fission']:
+        if args.task not in ['transference', 'fission', 'fission_classification']:
             out_ct = torch.stack([post_pred(i) for i in decollate_batch(out_ct)])
 
-        if args.task != 'fission':
+        if args.task not in ['fission',  'fission_classification']:
             out_pet = torch.stack([post_pred(i) for i in decollate_batch(out_pet)])
         else:
             out_seg = torch.stack([post_pred(i) for i in decollate_batch(out_seg)])
@@ -435,13 +502,13 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
 
         inp_pet = convert_output(inp, device, spatial_size, add_channel)
 
-        if args.task not in ['transference', 'fission']:
+        if args.task not in ['transference', 'fission', 'fission_classification']:
             out_ct = convert_output(out_ct, device, spatial_size, add_channel)
         else:
             out_ct = nnf.interpolate(add_channel(add_channel(out_ct[0, 0])), size=spatial_size)[0][0]
             out_ct *= ((inp_ct > 0) * 1.0)
 
-        if args.task != 'fission':
+        if args.task not in ['fission', 'fission_classification']:
             out_pet = convert_output(out_pet, device, spatial_size, add_channel)
         else:
             out_pet = nnf.interpolate(add_channel(add_channel(out_pet[0, 0])), size=spatial_size)[0][0]
@@ -454,7 +521,7 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
         names = ['ct', 'pet', 'ct_pred', 'pet_pred', 'label']
         data = [inp_ct, inp_pet, out_ct, out_pet, out_label]
 
-        if args.task == 'fission':
+        if args.task in ['fission', 'fission_classification']:
             names.append('out_seg')
             data.append(out_seg)
 
