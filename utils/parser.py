@@ -139,5 +139,7 @@ def prepare_parser(parser):
                          help='Generate GradCAM during evaluation.')
     parser.add_argument('--gradcam_start_index', type=int, default=0,
                          help='GradCAM stard index.')
+    parser.add_argument('--save_network_graph_image', default=False, action='store_true',
+                         help='Generate a graph of the network architecture and save it as a png image.')
 
     return parser

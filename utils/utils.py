@@ -24,6 +24,9 @@ from tqdm import tqdm
 from loss.dice_ce_rec import DiceCE_Rec_Loss
 from loss.dice_ce_rec_class import DiceCE_Rec_Class_Loss
 
+# Visualization
+from torchinfo import summary
+from torchviz import make_dot
 
 
 def prepare_out_channels(args):
@@ -37,8 +40,10 @@ def prepare_input_mod(args):
     input_mod = "ct_pet_vol" if args.single_mod is None or args.early_fusion else args.single_mod
     input_mod = f'mip_{args.proj_dim}' if args.proj_dim is not None and args.proj_dim != "all_mips" else input_mod
     input_mod = "all_mips" if args.proj_dim == 'all_mips' else input_mod
+    assert input_mod in ['ct_pet_vol', 'ct_vol', 'pet_vol', 'mip_x', 'mip_y', 'mip_y', 'mip_z']
     print('Input modality:', input_mod)
     return input_mod
+
 
 def check_data_shape(train_loader, input_mod, args):
     check_data = first(train_loader)
@@ -197,3 +202,7 @@ def generate_pngs(data_dir):
             img_png = np.expand_dims(img, axis=2) * 255
             img_png_fn = os.path.join(data_dir, f'pngs/mip_{axis}', img_fn.split('/')[-1].replace('npy', 'png'))
             cv2.imwrite(img_png_fn, img_png)
+
+def save_network_graph_plot(net, data, args):
+    yhat = net(data)
+    make_dot(yhat, params=dict(list(net.named_parameters()))).render(f"mirrorUNet_graph_level_{args.level}_depth_{args.depth}", format="png")

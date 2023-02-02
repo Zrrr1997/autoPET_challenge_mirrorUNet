@@ -1,5 +1,3 @@
-from tqdm import tqdm
-import numpy as np
 import os
 import sys
 import json
@@ -9,10 +7,6 @@ import argparse
 # Torch
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from torchinfo import summary
-from torchviz import make_dot
-
-
 
 # IGNITE
 import ignite
@@ -22,19 +16,13 @@ from ignite.engine import (
     create_supervised_evaluator,
     create_supervised_trainer,
 )
-
 from ignite.handlers import ModelCheckpoint
 
 # MONAI
-import monai
+from monai.data import decollate_batch
 
-from monai.data import list_data_collate, decollate_batch
-
-from monai.metrics import compute_meandice
 from monai.handlers import (
-    MeanDice,
     StatsHandler,
-    TensorBoardImageHandler,
     TensorBoardStatsHandler,
     LrScheduleHandler,
 )
@@ -53,34 +41,28 @@ from utils.eval import *
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
-    # Use all cores
+    # Use all available cores
     print(f"CPU Count: {os.cpu_count()}")
     torch.set_num_threads(os.cpu_count())
     print(f"Num threads: {torch.get_num_threads()}")
 
-    parser = argparse.ArgumentParser(description='AutoPET codebase implementation.')
+    parser = argparse.ArgumentParser(description='Mirror U-Net for AutoPET: codebase implementation.')
     parser = prepare_parser(parser)
     args = parser.parse_args()
     print('--------\n')
     print(args, '\n')
     print('--------')
 
-
-
-    out_channels = prepare_out_channels(args)
+    out_channels = prepare_out_channels(args) # Output channels per branch
     input_mod = prepare_input_mod(args)
 
-
     best_f1_dice, best_bg_dice = 0, 0
-
 
     # Create Model, Loss, and Optimizer
     device = torch.device(f"cuda:{args.gpu}") if args.gpu >= 0 else torch.device("cpu")
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
-    #torch.jit.script(net).save("mirrorUNET.zip")
-    #exit()
-    #summary(net, input_size=(args.batch_size, 2, 400, 400, 128))
+
 
 
     # Data configurations
@@ -98,9 +80,9 @@ if __name__ == "__main__":
     check_data = first(val_loader)
     print('Input shape check:', check_data[input_mod].shape)
 
-    #yhat = net(check_data['ct_pet_vol'].to(device))
-    #make_dot(yhat, params=dict(list(net.named_parameters()))).render(f"mirrorUNet_graph_level_{args.level}_depth_{args.depth}", format="png")
-    #exit()
+    if args.save_network_graph_image:
+        data = check_data['ct_pet_vol'].to(device)
+        save_network_graph_plot(net, data, args)
 
 
     check_data_shape(val_loader, input_mod, args)
