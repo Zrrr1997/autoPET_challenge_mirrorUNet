@@ -1,13 +1,9 @@
 import pandas as pd
-import numpy as np
-import torch
 import os
-import cv2
-from tqdm import tqdm
 
 # MONAI
 from monai.utils import set_determinism
-from monai.data import DataLoader, Dataset, CacheDataset, PersistentDataset, ThreadDataLoader
+from monai.data import Dataset, CacheDataset, PersistentDataset, ThreadDataLoader
 from monai.data import list_data_collate
 
 # Utils
@@ -15,9 +11,13 @@ from utils.transforms import prepare_transforms
 from utils.generate_mip import generate_mip
 from utils.utils import prepare_input_mod
 
-def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-PET-CT-Lesions/', args=None):
+def process_MIPs(train_val_MIP, dim):
+    path_MIP_scans_train_val_dim = sorted([os.path.join(f'{train_val_MIP}/mip_{dim}/', el) for el in sorted(os.listdir(f'{train_val_MIP}/mip_{dim}/'))])
+    return path_MIP_scans_train_val_dim
 
-    # AutoPET path for in_dir at IKIM: '/projects/datashare/tio/autopet/FDG-PET-CT-Lesions/'
+def read_fns(in_dir=None, args=None):
+
+    # AutoPET path for in_dir should point to FDG-PET-CT-Lesions/'
     set_determinism(seed=0)
     print(f"Input directory: {in_dir}")
 
@@ -26,14 +26,11 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
             return 0.0
         return 1.0
 
-
-
     if args.dataset == 'AutoPET':
         df_cv = pd.read_csv('data/autopet_5folds_augmented.csv')
         df_cv['study_location'] = df_cv['study_location'].str.replace('/projects/datashare/tio/autopet/FDG-PET-CT-Lesions/', in_dir)
     else:
         df_cv = pd.read_csv('data/acrin_5folds_augmented.csv')
-
 
     if not args.with_negatives:
         df_cv_train = df_cv[(df_cv['kfold'] != args.fold) & (df_cv['diagnosis'] != 'NEGATIVE')]
@@ -58,15 +55,13 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
     path_SEG_scans_val = [os.path.join(el, 'SEG.nii.gz') for el in path_val_files]
 
 
-
-
-    # Tumor / No-tumor classes
+    # Tumor / No-tumor binary classes (0.0 or 1.0)
     train_class_labels = [class_label(el, negative_fns) for el in path_CT_scans_train]
     val_class_labels = [class_label(el, negative_fns) for el in path_CT_scans_val]
 
+    # Maximum Intensity Projections (MIPs) used for classification
     train_MIP = f'./data/MIP/fold_{args.fold}/train_data'
     val_MIP = f'./data/MIP/fold_{args.fold}/val_data'
-
 
     seg_train_MIP = train_MIP
     seg_val_MIP = val_MIP
@@ -75,23 +70,25 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
         print('Using the MIPs with removed brains...')
         train_MIP = f'./data/MIP/threshold_exp/de-brain/fold_{args.fold}/train_data/'
         val_MIP = f'./data/MIP/threshold_exp/de-brain/fold_{args.fold}/val_data/'
-    path_MIP_scans_train_x = sorted([os.path.join(f'{train_MIP}/mip_x/', el) for el in sorted(os.listdir(f'{train_MIP}/mip_x/'))])
-    path_MIP_scans_val_x = sorted([os.path.join(f'{val_MIP}/mip_x/', el) for el in sorted(os.listdir(f'{val_MIP}/mip_x/'))])
-    path_MIP_scans_train_y = sorted([os.path.join(f'{train_MIP}/mip_y/', el) for el in sorted(os.listdir(f'{train_MIP}/mip_y/'))])
-    path_MIP_scans_val_y = sorted([os.path.join(f'{val_MIP}/mip_y/', el) for el in sorted(os.listdir(f'{val_MIP}/mip_y/'))])
-    path_MIP_scans_train_z = sorted([os.path.join(f'{train_MIP}/mip_z/', el) for el in sorted(os.listdir(f'{train_MIP}/mip_z/'))])
-    path_MIP_scans_val_z = sorted([os.path.join(f'{val_MIP}/mip_z/', el) for el in sorted(os.listdir(f'{val_MIP}/mip_z/'))])
 
-    # Only implemented for fold_0 (for now)
+    path_MIP_scans_train_x = process_MIPs(train_MIP, 'x')
+    path_MIP_scans_val_x = process_MIPs(val_MIP, 'x')
+    path_MIP_scans_train_y = process_MIPs(train_MIP, 'y')
+    path_MIP_scans_val_y = process_MIPs(val_MIP, 'y')
+    path_MIP_scans_train_z = process_MIPs(train_MIP, 'z')
+    path_MIP_scans_val_z = process_MIPs(val_MIP, 'z')
+
+    # 2D Seg-MIPs are only pre-computed for fold 0 (for now)
     if not args.generate_mip:
-        path_MIP_segs_train_x = sorted([os.path.join(f'{seg_train_MIP}/pngs/seg/mip_x/', el) for el in sorted(os.listdir(f'{seg_train_MIP}/pngs/seg/mip_x/'))])
-        path_MIP_segs_val_x = sorted([os.path.join(f'{seg_val_MIP}/pngs/seg/mip_x/', el) for el in sorted(os.listdir(f'{seg_val_MIP}/pngs/seg/mip_x/'))])
-        path_MIP_segs_train_y = sorted([os.path.join(f'{seg_train_MIP}/pngs/seg/mip_y/', el) for el in sorted(os.listdir(f'{seg_train_MIP}/pngs/seg/mip_y/'))])
-        path_MIP_segs_val_y = sorted([os.path.join(f'{seg_val_MIP}/pngs/seg/mip_y/', el) for el in sorted(os.listdir(f'{seg_val_MIP}/pngs/seg/mip_y/'))])
-        path_MIP_segs_train_z = sorted([os.path.join(f'{seg_train_MIP}/pngs/seg/mip_z/', el) for el in sorted(os.listdir(f'{seg_train_MIP}/pngs/seg/mip_z/'))])
-        path_MIP_segs_val_z = sorted([os.path.join(f'{seg_val_MIP}/pngs/seg/mip_z/', el) for el in sorted(os.listdir(f'{seg_val_MIP}/pngs/seg/mip_z/'))])
+        path_MIP_segs_train_x = process_MIPs(seg_train_MIP + '/pngs/seg/', 'x')
+        path_MIP_segs_val_x = process_MIPs(seg_val_MIP + '/pngs/seg/', 'x')
+        path_MIP_segs_train_y = process_MIPs(seg_train_MIP + '/pngs/seg/', 'y')
+        path_MIP_segs_val_y = process_MIPs(seg_val_MIP + '/pngs/seg/', 'y')
+        path_MIP_segs_train_z = process_MIPs(seg_train_MIP + '/pngs/seg/', 'z')
+        path_MIP_segs_val_z = process_MIPs(seg_val_MIP + '/pngs/seg/', 'z')
 
-    if args.generate_mip:
+
+    if args.generate_mip: # Placeholders during data generation
         path_MIP_scans_train_x = ['dummy'] * len(train_class_labels)
         path_MIP_scans_train_y = ['dummy'] * len(train_class_labels)
         path_MIP_scans_train_z = ['dummy'] * len(train_class_labels)
@@ -176,19 +173,13 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
                   path_MIP_segs_val_z)]
 
 
-
     if args.evaluate_only:
-        train_files = train_files[:4] # Don't read so many training files...
+        train_files = train_files[:4] # Skin loading whole training dataset
         val_files = val_files
 
     if args.debug:
         train_files = train_files[:4]
         val_files = train_files[:4] # test overfitting with small number of samples
-
-    # do not validate when using sliding window...
-    #if args.sliding_window and not args.evaluate_only and args.task != 'classification':
-    #    val_files = [val_files[0]]
-
 
     print('Train - positives:', len([el for el in train_files if el['class_label'] == 1.0]), 'negatives:', len([el for el in train_files if el['class_label'] == 0.0]))
     print('Val - positives:', len([el for el in val_files if el['class_label'] == 1.0]), 'negatives:', len([el for el in val_files if el['class_label'] == 0.0]))
@@ -204,7 +195,7 @@ def read_fns(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-P
 
     return train_files, val_files
 
-def prepare_loaders(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPET/FDG-PET-CT-Lesions/', pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_min_pet=0, a_max_pet=15, spatial_size=[400, 400, 128], cache=True, args=None):
+def prepare_loaders(in_dir=None, pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_min_pet=0, a_max_pet=15, spatial_size=[400, 400, 128], cache=True, args=None):
 
     cache = not args.no_cache
 
@@ -213,26 +204,19 @@ def prepare_loaders(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPE
     train_transforms, val_transforms = prepare_transforms(pixdim=pixdim, a_min_ct=a_min_ct, a_max_ct=a_max_ct, a_min_pet=a_min_pet, a_max_pet=a_max_pet, spatial_size=spatial_size, args=args)
 
     if cache:
-        if args.task == 'classification' or args.generate_mip:
+        if args.task == 'classification' or args.generate_mip: # No need for persistent storage
             train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=1.0, copy_cache=False)
             val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=1.0, copy_cache=False)
         else:
             input_mod = prepare_input_mod(args)
             task_cache_dir = f'./cache/{args.task}/{input_mod}/sliding_window_{args.sliding_window}/with_DA_{args.with_DA}'
-            if args.task == 'transference':
-                task_cache_dir = task_cache_dir.replace('transference', 'segmentation') # Segmentation and Transference tasks should share the cache dir
-            if args.task == 'fission':
-                task_cache_dir = task_cache_dir.replace('fission', 'segmentation') # Segmentation and Transference tasks should share the cache dir
-            if args.task == 'fission_classification':
-                task_cache_dir = task_cache_dir.replace('fission_classification', 'segmentation') # Segmentation and Transference tasks should share the cache dir
-            if args.task == 'reconstruction':
-                task_cache_dir = task_cache_dir.replace('reconstruction', 'segmentation') # Segmentation and Reconstruction tasks should share the cache dir
+
+            if args.task in ['transference', 'fission', 'fission_classification', 'reconstruction']:
+                task_cache_dir = task_cache_dir.replace(args.task, 'segmentation') # Segmentation and args.task should share the cache dir
             if args.debug:
                 task_cache_dir = os.path.join(task_cache_dir, 'debug')
             if args.with_negatives:
                 task_cache_dir = os.path.join(task_cache_dir, 'with_negatives')
-            if args.comparison == 'blackbean':
-                task_cache_dir = os.path.join(task_cache_dir, args.comparison)
             if args.dataset == 'ACRIN':
                 task_cache_dir = os.path.join(task_cache_dir, args.dataset)
 
@@ -250,7 +234,6 @@ def prepare_loaders(in_dir='/hkfs/work/workspace/scratch/zk6393-test_zrrr/autoPE
                               batch_size=args.batch_size,
                               num_workers=0, # must be 0 to avoid "unexpected exception"
                               collate_fn=list_data_collate
-                              #pin_memory=torch.cuda.is_available()
                               )
     val_batch_size = 1 if args.sliding_window else args.batch_size
     val_loader = ThreadDataLoader(val_ds,

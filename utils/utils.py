@@ -5,9 +5,6 @@ from monai.handlers import MeanDice, MeanSquaredError
 from monai.transforms import (
     AsDiscrete,
     Identity,
-    Compose,
-    ConcatItemsd,
-    SplitChannel,
     Lambda
 )
 
@@ -21,16 +18,30 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-from loss.dice_ce_rec import DiceCE_Rec_Loss
-from loss.dice_ce_rec_class import DiceCE_Rec_Class_Loss
+from loss.dice_ce_rec import DiceCE_Rec_Loss # Transference, Fission
+from loss.dice_ce_rec_class import DiceCE_Rec_Class_Loss # Fission + Classification
 
 # Visualization
 from torchinfo import summary
 from torchviz import make_dot
 
 
+def check_args(args):
+    if args.sliding_window:
+        assert args.batch_size == 1 # Sliding window can only work with batch_size 1
+    if args.task == 'classification':
+        assert args.batch_size >= 4 and args.proj_dim is not None
+    if args.depth != 1:
+        assert args.level == 3 # Only share around the bottleneck with higher depth
+    if 'fission' in args.task:
+        assert args.batch_size <= 2 # Model is too large for larger batch sizes
+
 def prepare_out_channels(args):
-    out_channels = 2 if args.task in ['segmentation', 'segmentation_classification', 'transference', 'fission', 'fission_classification'] or args.early_fusion else 1
+    out_channels = 2 if args.task in ['segmentation',
+                                    'segmentation_classification',
+                                    'transference',
+                                    'fission',
+                                    'fission_classification'] or args.early_fusion else 1
 
     print('Number of output channels', out_channels)
     return out_channels
@@ -80,10 +91,10 @@ def prepare_loss(args):
         loss = torch.nn.MSELoss()
     elif args.task == 'classification':
         loss = torch.nn.BCELoss()
-    elif args.task in ['transference', 'fission', 'fission_classification']:
+    elif args.task in ['transference', 'fission']:
         loss = DiceCE_Rec_Loss(to_onehot_y=True, softmax=True, include_background=args.include_background, batch=True, lambda_rec=args.lambda_rec, lambda_ce=args.lambda_seg, lambda_dice=args.lambda_seg, args=args)
         print('Using DiceCE loss with reconstruction.')
-    elif args.task == 'multi-task': # TODO
+    elif args.task == 'fission_classification': # TODO
         loss = DiceCE_Rec_Class_Loss(to_onehot_y=True, softmax=True, include_background=args.include_background, batch=True, lambda_rec=args.lambda_rec, lambda_ce=args.lambda_seg, lambda_dice=args.lambda_seg)
     else:
         raise ValueError(f"Task {args.task} is not supported!")
@@ -98,11 +109,6 @@ def prepare_attention(args):
             print(f'Attention for {args.proj_dim} is not supported!')
         attention = torch.tensor(np.max(cv2.imread(f'./data/MIP/train_data/mip_{args.proj_dim}_sum.png'), axis=2)).unsqueeze(dim=0).unsqueeze(dim=0)
     return attention
-
-def class_label(ct_path, neg_paths):
-    if ct_path[:-12] in neg_paths: # len(CTres.nii.gz) == 12
-        return 0.0
-    return 1.0
 
 def prepare_val_metrics(args):
     if args.task in ['segmentation', 'segmentation_classification', 'transference', 'fission', 'fission_classification']:

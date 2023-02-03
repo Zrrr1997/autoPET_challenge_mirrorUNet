@@ -7,7 +7,7 @@ import torch.nn.functional as nnf
 from monai.transforms import AddChannel, LoadImage, Resize, ToNumpy
 import numpy as np
 from scipy import ndimage
-from models.resnet import ResNet
+from models.classification.resnet import ResNet
 
 
 

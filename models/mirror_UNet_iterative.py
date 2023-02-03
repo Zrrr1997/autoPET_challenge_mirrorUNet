@@ -233,15 +233,6 @@ class Mirror_UNet(nn.Module):
         self.up_2_4 = self._get_up_layer(2 * channel_list[1], 2, 2, True).to(device)
 
 
-
-
-
-
-
-
-
-
-
     def _get_down_layer(self, in_channels: int, out_channels: int, strides: int, is_top: bool) -> nn.Module:
         """
         Returns the encoding (down) part of a layer of the network. This typically will downsample data at some point
@@ -371,8 +362,6 @@ class Mirror_UNet(nn.Module):
         x_2 = self.up_2_2(torch.cat([x_13, x_2], dim=1))
         x_2 = self.up_2_3(torch.cat([x_12, x_2], dim=1))
         x_2 = self.up_2_4(torch.cat([x_11, x_2], dim=1))
-
-
 
 
         x_12 = torch.cat((x_1, x_2), dim=1)

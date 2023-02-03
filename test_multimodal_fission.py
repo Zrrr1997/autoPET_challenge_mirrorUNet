@@ -53,6 +53,8 @@ if __name__ == "__main__":
     print(args, '\n')
     print('--------')
 
+    check_args(args)
+
     out_channels = prepare_out_channels(args) # Output channels per branch
     input_mod = prepare_input_mod(args)
 
@@ -63,14 +65,11 @@ if __name__ == "__main__":
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
 
-
-
     # Data configurations
-    spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128]
-    train_loader, val_loader, train_files, val_files = prepare_loaders(spatial_size=spatial_size, args=args)
+    spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128] # Fix axial resolution for non-sliding window inference
+    train_loader, val_loader, train_files, val_files = prepare_loaders(in_dir=args.in_dir, spatial_size=spatial_size, args=args)
 
-
-
+    # Tensorboard stats
     writer = SummaryWriter(log_dir = args.log_dir)
 
     # Write the current configuration to file
@@ -84,7 +83,6 @@ if __name__ == "__main__":
         data = check_data['ct_pet_vol'].to(device)
         save_network_graph_plot(net, data, args)
 
-
     check_data_shape(val_loader, input_mod, args)
 
     # Hyperparameters
@@ -93,15 +91,18 @@ if __name__ == "__main__":
 
     opt = torch.optim.Adam(net.parameters(), lr, weight_decay=1e-5)
 
+    # Noise or Voxel Shuffling
     if args.self_supervision != 'L2':
         rand_noise = RandGaussianNoise(prob=1.0, std=0.3)
         rand_shuffle = RandCoarseShuffle(prob=1.0, spatial_size=16, holes=args.n_masks)
 
+    # Append prior distribution of training labels to the input
     attention = None
     if args.mask_attention:
         attention = prepare_attention(args)
         print('Attention shape:', attention.shape)
 
+    # Utility function to propagate the class label during inference
     def f_class_label(class_label, batch):
         if class_label != 0:
             class_label = torch.ones(batch.shape[1:])
@@ -109,35 +110,36 @@ if __name__ == "__main__":
             class_label = torch.zeros(batch.shape[1:])
         return class_label
 
+    # Ignite expects a (input, label) tuple
     def prepare_batch(batch, device=None, non_blocking=False, task=args.task):
         if not args.mask_attention:
             inp = batch[input_mod]
         else:
+            # Append the attention tensor to all volumes in the batch
             inp = torch.cat((torch.cat(batch[input_mod].shape[0] * [attention]), batch[input_mod]), dim=1) # dim=1 is the channel
 
-        if task == 'segmentation' or task == 'segmentation_classification':
-            if args.comparison == 'spie':
-                cls = torch.ones(inp.shape).to(device)
-                cls *= batch['class_label'][..., None, None, None, None].to(device)
-                return _prepare_batch((inp, torch.cat([inp, batch['seg'], cls], dim=1)), device, non_blocking)
-
+        ### Segmentation ###
+        if task == 'segmentation':
             return _prepare_batch((inp, batch["seg"]), device, non_blocking)
+        ### Reconstruction ###
         elif task == 'reconstruction':
             return _prepare_batch((inp, batch[input_mod]), device, non_blocking)
+        ### Classification ###
         elif task == 'classification' and not args.mask_attention and args.sliding_window: # classification without mask, with sliding window inference
-            seg = batch[f"mip_seg_{args.proj_dim}"]
+            seg = batch[f"mip_seg_{args.proj_dim}"] # png with MIP-GT-mask
             label = []
-            for el in seg:
-                label.append((torch.sum(el) > 0) * 1.0)
+            for el in seg: # Iterate over batch
+                label.append((torch.sum(el) > 0) * 1.0) # pos if at least one voxel has a tumor
             label = torch.Tensor(label)
             return _prepare_batch((inp, label.unsqueeze(dim=1).float()), device, non_blocking)
-        elif task == 'classification' and not args.mask_attention and args.proj_dim is None: # classification without mask, with 3 channels
+        elif task == 'classification' and not args.mask_attention and args.proj_dim is None: # classification without mask, with 3 channels (X,Y,Z)
             return _prepare_batch((inp, batch["class_label"].unsqueeze(dim=1).float()), device, non_blocking)
-        elif task == 'classification' and args.proj_dim is not None: # classification with mask, with 1 channel
+        elif task == 'classification' and args.proj_dim is not None: # classification with 1 channel
             return _prepare_batch((inp, batch["class_label"].unsqueeze(dim=1).float()), device, non_blocking)
+        ### Multi-Task Settings ###
         elif task in ['transference', 'fission', 'fission_classification']:
             ct_vol = inp[:, :1]
-            if task == 'fission_classification':
+            if task == 'fission_classification': # Get class
                 cls = torch.ones(ct_vol.shape).to(device)
                 cls *= batch['class_label'][..., None, None, None, None].to(device)
 
@@ -179,7 +181,6 @@ if __name__ == "__main__":
             exit()
 
 
-
     # Metric to evaluate whether to save the "best" model or not
     def default_score_fn(engine):
         if args.task == 'classification':
@@ -190,7 +191,7 @@ if __name__ == "__main__":
             score = engine.state.metrics['Mean_Dice']
         return score
     def default_score_fn_F1(engine):
-        return engine.state.metrics['Mean_Dice_F1'] # More representative for tumors
+        return engine.state.metrics['Mean_Dice_F1'] # Only foreground dice (tumors)
 
 
     trainer = create_supervised_trainer(
@@ -249,8 +250,7 @@ if __name__ == "__main__":
 
     @trainer.on(Events.ITERATION_COMPLETED(every=validation_every_n_iters))
     def run_validation(engine):
-        if args.comparison == 'blackbean':
-            return
+
         global best_f1_dice, best_bg_dice
 
         #####################################
@@ -264,6 +264,7 @@ if __name__ == "__main__":
         ##         SEGMENTATION            ##
         #####################################
         if args.task=='segmentation':
+            # Late fusion of two networks
             if net_2 is not None and args.load_weights_second_model is not None:
                 f1_dice, bg_dice = segmentation_late_fusion(evaluator, val_loader, net, net_2, args, post_pred, post_label, device)
             else:
@@ -326,8 +327,6 @@ if __name__ == "__main__":
                     best_bg_dice = bg_dice
                     with open(os.path.join(args.ckpt_dir, f'best_bg_dice.txt'), 'a+') as f:
                         f.write(str(best_bg_dice) + '\n')
-
-
 
         if args.task == 'reconstruction':
             r_loss = reconstruction(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)

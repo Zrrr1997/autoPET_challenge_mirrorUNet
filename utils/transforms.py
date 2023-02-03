@@ -3,7 +3,6 @@ from monai.transforms import(
     LoadImaged,
     Resized,
     ToTensord,
-    ToNumpyd,
     Spacingd,
     Orientationd,
     ScaleIntensityd,
@@ -11,27 +10,13 @@ from monai.transforms import(
     CropForegroundd,
     ConcatItemsd,
     RandCropByPosNegLabeld,
-    RandSpatialCropd,
     RandAffined,
     RandRotated,
-    RandGaussianNoised,
-    RandGaussianSmoothd,
-    RandScaleIntensityd,
     RandFlipd,
     EnsureTyped,
-    ScaleIntensity,
-    RandAdjustContrastd,
     Compose
 )
 
-#RandGaussianNoised(keys=["ct_vol", "pet_vol"], prob=0.15),
-#RandGaussianSmoothd(keys=["ct_vol"], prob=0.1, sigma_x=[0.5, 1.5], sigma_y=[0.5, 1.5], sigma_z=[0.5, 1.5]),
-#RandGaussianSmoothd(keys=["pet_vol"], prob=0.1, sigma_x=[0.5, 1.5], sigma_y=[0.5, 1.5], sigma_z=[0.5, 1.5]),
-#RandScaleIntensityd(keys=["ct_vol", "pet_vol"], prob=0.15, factors=0.3),
-#RandScaleIntensityd(keys=["ct_vol", "pet_vol"], prob=0.15, factors=[-0.45, 0.5]),
-#ScaleIntensityd(keys=["ct_vol", "pet_vol"], minv=0, maxv=1),
-
-from monai.data import set_track_meta
 import numpy as np
 import torch
 
@@ -42,44 +27,9 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
     if args.task == 'classification' and args.class_backbone != 'Ensemble':
         pos_freqs = {'x': 0.7, 'y': 0.65, 'z': 0.7, 'all_mips': 0.0} # only for sliding window classfication
         pos_freq = pos_freqs[args.proj_dim]
+        print('Positive patch sampling rate', pos_freq)
 
-    if args.comparison == 'blackbean':
-            train_transforms = Compose(
-                [
-                    LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
-                    AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
-                    Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=[1.5, 1.0182, 1.0182], mode=("bilinear", "bilinear", "nearest")),
-                    Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
-                    ScaleIntensityd(keys=["ct_vol"], minv=0, maxv=1),
-                    ScaleIntensityd(keys=["pet_vol"], minv=0, maxv=1),
-                    ConcatItemsd(keys=["ct_vol", "pet_vol"], name="ct_pet_vol", dim=0),  # concatenate pet and ct channels
-                    EnsureTyped(keys=["ct_pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}"), track_meta=False),
-                    RandSpatialCropd(keys=["ct_pet_vol", "seg"], roi_size=(192, 192, 192), random_size=False),
-                    RandScaleIntensityd(keys=["ct_pet_vol"], prob=1.0, factors=[-0.25, 0.25]),
-                    RandAdjustContrastd(keys=["ct_pet_vol"], prob=0.3, gamma=(0.7, 1.5)),
-                    RandRotated(keys=["ct_pet_vol", "seg"], range_x=np.pi / 12, range_y=np.pi / 12, range_z=np.pi / 12, prob=1.0),
-                    RandFlipd(keys=["ct_pet_vol", "seg"], prob=0.5, spatial_axis=0),
-                    RandFlipd(keys=["ct_pet_vol", "seg"], prob=0.5, spatial_axis=1),
-                    RandFlipd(keys=["ct_pet_vol", "seg"], prob=0.5, spatial_axis=2),
-                    ToTensord(keys=["seg", "ct_pet_vol", "class_label"]),
-                ]
-            )
 
-            val_transforms = Compose(
-                [
-                    LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
-                    AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
-                    Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=[1.5, 1.0182, 1.0182], mode=("bilinear", "bilinear", "nearest")),
-                    Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
-                    ScaleIntensityRanged(keys=["ct_vol"], a_min=a_min_ct, a_max=a_max_ct, b_min=0.0, b_max=1.0, clip=False),
-                    ScaleIntensityd(keys=["pet_vol"], minv=0, maxv=1),
-                    ConcatItemsd(keys=["ct_vol", "pet_vol"], name="ct_pet_vol", dim=0),  # concatenate pet and ct channels
-                    EnsureTyped(keys=["ct_pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}"), track_meta=False),
-                    RandSpatialCropd(keys=["ct_pet_vol", "seg"], roi_size=(192, 192, 192), random_size=False),
-                    ToTensord(keys=["seg", "ct_pet_vol", "class_label"]),
-                ]
-            )
-            return train_transforms, val_transforms
     if args.dataset == 'ACRIN':
             train_transforms = Compose(
                 [
@@ -118,15 +68,15 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
     if args.generate_mip:
         train_transforms = Compose(
             [
-                LoadImaged(keys=["pet_vol"]),
-                AddChanneld(keys=["pet_vol"]),
-                Spacingd(keys=["pet_vol"], pixdim=pixdim, mode=("bilinear")),
-                Orientationd(keys=["pet_vol"], axcodes="LAS"),
+                LoadImaged(keys=["pet_vol", "seg"]),
+                AddChanneld(keys=["pet_vol", "seg"]),
+                Spacingd(keys=["pet_vol", "seg"], pixdim=pixdim, mode=("bilinear")),
+                Orientationd(keys=["pet_vol", "seg"], axcodes="LAS"),
                 ScaleIntensityRanged(keys=["pet_vol"], a_min=a_min_pet, a_max=a_max_pet, b_min=0.0, b_max=1.0, clip=True),
-                CropForegroundd(keys=["pet_vol"], source_key="pet_vol"),
-                Resized(keys=["pet_vol"], spatial_size=spatial_size),
-                ToTensord(keys=["pet_vol"]),
-                EnsureTyped(keys=["pet_vol"], device=torch.device(f"cuda:{args.gpu}"), track_meta=False),
+                CropForegroundd(keys=["pet_vol", "seg"], source_key="pet_vol"),
+                Resized(keys=["pet_vol", "seg"], spatial_size=spatial_size),
+                ToTensord(keys=["pet_vol", "seg"]),
+                EnsureTyped(keys=["pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}"), track_meta=False),
             ]
         )
     # Sliding Window Segmentation or Transference without DA

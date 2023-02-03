@@ -5,7 +5,7 @@ def prepare_parser(parser):
     parser.add_argument('--lr', type=float, default=1e-3,
                          help='Learning rate.')
     parser.add_argument('--lr_step_size', type=int, default=250,
-                         help='Decrease learning rate every lr_step_size epochs.')
+                         help='Decrease learning rate every lr_step_size epochs (multiply by 0.1).')
     parser.add_argument('--batch_size', type=int, default=4,
                          help='Batch size for data loaders.')
     parser.add_argument('--epochs', type=int, default=400,
@@ -33,11 +33,9 @@ def prepare_parser(parser):
     parser.add_argument('--gpu', type=int, default=0,
                          help='GPU device index.')
     parser.add_argument('--debug', default=False, action='store_true',
-                         help='Debug with one sample for training and validation.')
+                         help='Debug with two samples for training and validation.')
     parser.add_argument('--sliding_window', default=False, action='store_true',
                          help='Use sliding window inference.')
-    parser.add_argument('--save_eval_img', default=False, action='store_true',
-                         help='Save an image during evaluation.')
     parser.add_argument('--save_nifti', default=False, action='store_true',
                          help='Save nifti files of the output and ground truth.')
 
@@ -47,17 +45,22 @@ def prepare_parser(parser):
     parser.add_argument('--fold', type=int, default=0,
                          help='Cross-validation fold to evaluate on: [0, 1, 2, 3, 4, 5].')
     parser.add_argument('--single_mod', type=str, default=None,
-                         help='Training/Evaluating on single modality, e.g. pet_vol or ct_vol.')
+                         help='Training/Evaluating on single modality, e.g. pet_vol or ct_vol for the Vanilla UNet.')
     parser.add_argument('--evaluate_only', default=False, action='store_true',
                          help='Only evaluate without training.')
+    parser.add_argument('--no_cache', default=False, action='store_true',
+                         help='Toggle using PersistentDataset for cache.')
+    parser.add_argument('--in_dir', type=str, default='/hkfs/work/workspace/scratch/zk6393-zrrr_ws/zk6393-test_zrrr/autoPET/FDG-PET-CT-Lesions/',
+                         help='Dataset root directory.')
+
+    # Classification
     parser.add_argument('--proj_dim', type=str, default=None,
                          help='Dimension on which to do the MIP projection: [x, y, z, all]')
     parser.add_argument('--debrain', default=False, action='store_true',
                          help='Use the de-brained MIPs.')
-    parser.add_argument('--no_cache', default=False, action='store_true',
-                         help='Toggle using CacheDataset/PersistentDataset.')
 
-    # evaluation
+
+    # Evaluation
     parser.add_argument('--logit_fusion', default=False, action='store_true',
                          help='Fusion by averaging the logits.')
     parser.add_argument('--decision_fusion', default=False, action='store_true',
@@ -66,8 +69,8 @@ def prepare_parser(parser):
                          help='Return separate outputs for the two Mirror UNet arms.')
 
 
-
     # Model
+    ## Loading
     parser.add_argument('--load_weights', type=str, default=None,
                          help='Load model from this directory.')
     parser.add_argument('--load_weights_second_model', type=str, default=None,
@@ -76,20 +79,17 @@ def prepare_parser(parser):
                          help='Load best validation model from the given directory.')
     parser.add_argument('--load_keyword', type=str, default=None,
                              help='Keyword to search for in the weights file.')
+
+    ## Tasks
     parser.add_argument('--task', type=str, default='segmentation',
-                         help='Training task for the model: [segmentation, reconstruction, classification, segmentation_classification, transference, fission, fission_classification]')
+                         help='Training task for the model: [segmentation, reconstruction, classification, transference, fission, fission_classification]')
     parser.add_argument('--early_fusion', default=False, action='store_true',
                          help='Train UNet with early fusion (channel concatenation).')
     parser.add_argument('--mask_attention', default=False, action='store_true',
-                         help='Concatenate the distribution of tumor locations to the input channel (mask_attention).')
+                         help='Concatenate the prior distribution of tumor locations to the input channel (mask_attention).')
     parser.add_argument('--pretrained', default=False, action='store_true',
                         help='True if loading pre-trained weights for initialization (required for tranference pre-initialization).')
-    parser.add_argument('--vertical_skip', default=False, action='store_true',
-                        help='Add vertical skip connections (CT --> PET) in Mirror UNet.')
-    parser.add_argument('--attention_UNet', default=False, action='store_true',
-                        help='Use Attention UNet as a backbone.')
-    parser.add_argument('--cut_ct_skip', default=False, action='store_true',
-                        help='Use Attention UNet as a backbone.')
+
 
     # Classification
     parser.add_argument('--class_backbone', type=str, default='ResNet',
@@ -102,7 +102,6 @@ def prepare_parser(parser):
                          help='EfficientNet version: [b0, b4, widese_b0, widese_b4].')
     parser.add_argument('--coatnet_version', type=str, default='0',
                          help='CoAtNet version: [0, 1, 2, 3, 4].')
-
 
 
     # Mirror U-Net specific parameters
@@ -126,12 +125,10 @@ def prepare_parser(parser):
                          help='Self-supervision task for transference, fission, or multi-task learning: [L2, L2_noise, L2_mask].')
     parser.add_argument('--n_masks', type=int, default=1,
                         help='Number of masks to use for the MAE in the transference (experiment 2).')
-
-
-    parser.add_argument('--comparison', type=str, default=None,
-                         help='Comparison to other methods')
     parser.add_argument('--dataset', type=str, default='AutoPET',
                          help='Dataset to use: [AutoPET, ACRIN].')
+
+
     # Utils
     parser.add_argument('--generate_mip', default=False, action='store_true',
                              help='Generate maximum intensity projections (MIPs).')

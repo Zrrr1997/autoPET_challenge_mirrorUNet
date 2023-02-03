@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from models.utils import load_state_dict_from_url
+from models.classification.utils import load_state_dict_from_url
 
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
@@ -151,7 +151,7 @@ class Bottleneck(nn.Module):
 
         out = self.conv3(out)
 
-        
+
 
         out = self.bn3(out)
 
@@ -198,7 +198,7 @@ class Bottleneck_Dropout(nn.Module):
 
         out = self.conv3(out)
 
-        
+
         out = self.dropout(out)
         out = self.bn3(out)
 

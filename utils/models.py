@@ -1,13 +1,15 @@
-# Network architectures
-from models.mirror_UNet_iterative import Mirror_UNet
+# Segmentation Networks
+from models.mirror_UNet_variable import Mirror_UNet
 from models.UNet import UNet
-from models.attention_UNet import AttentionUnet
-from models.resnet import ResNet
-from models.efficient_net import EfficientNet
-from models.ensemble import Ensemble
-from models.coatnet import coatnet_0, coatnet_1, coatnet_2, coatnet_3, coatnet_4
+
+# Classification Networks
+from models.classification.resnet import ResNet
+from models.classification.efficient_net import EfficientNet
+from models.classification.ensemble import Ensemble
+from models.classification.coatnet import *
+
+# Utils
 from monai.networks.layers import Norm
-from models.basicunet import BasicUNet
 import torch.nn as nn
 import os
 
@@ -17,22 +19,16 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
     if (args.single_mod is not None or args.early_fusion) and args.task != 'classification' and args.class_backbone != 'Ensemble':
         in_channels = 2 if args.early_fusion and args.load_weights_second_model is None else 1
         in_channels = in_channels + 1 if args.mask_attention else in_channels
-        if args.comparison == 'blackbean': # TODO: Implement for MirrorUNet if the backbone works at all
-            net = BasicUNet(spatial_dims=3,
-                in_channels=2,
-                features=(32, 64, 128, 256, 64)
-            ).to(device)
-        else:
-            net = UNet(
-                spatial_dims=3,
-                in_channels=in_channels,
-                out_channels=out_channels, # softmax output (1 channel per class, i.e. Fg/Bg), 1 channel only for reconstruction (SSL pre-training)
-                channels=(16, 32, 64, 128, 256),
-                strides=(2, 2, 2, 2),
-                num_res_units=2,
-                norm=Norm.BATCH,
-                device=device
-            ).to(device)
+        net = UNet(
+            spatial_dims=3,
+            in_channels=in_channels,
+            out_channels=out_channels, # softmax output (1 channel per class, i.e. Fg/Bg), 1 channel only for reconstruction (SSL pre-training)
+            channels=(16, 32, 64, 128, 256),
+            strides=(2, 2, 2, 2),
+            num_res_units=2,
+            norm=Norm.BATCH,
+            device=device
+        ).to(device)
         if args.load_weights_second_model:
             net_2 = UNet(
                 spatial_dims=3,
@@ -47,7 +43,6 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
         print(f"Using UNet with early fusion == {args.early_fusion}")
     elif args.task != 'classification' and args.class_backbone != 'Ensemble': # Reconstruction, Segmentation or Transference
         in_channels = 2 if args.mask_attention else 1
-
         net = Mirror_UNet(
             spatial_dims=3,
             in_channels=1, # must be left at 1, this refers to the #c of each individual branch (PET or CT)
@@ -57,19 +52,11 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
             num_res_units=2,
             norm=Norm.BATCH,
             task=args.task,
-            gpu = args.gpu,
-            depth = args.depth,
-            level = args.level,
-            sliding_window = args.sliding_window,
-            separate_outputs = args.separate_outputs,
-            learnable_th_arg = args.learnable_th,
-            mirror_th = args.mirror_th
+            args=args,
         ).to(device)
-
-
         print("Using Mirror-UNet")
     else: # classification
-        in_channels = 2 if args.mask_attention else 3 # Mask not implemented for 3-channel MIPs (xyz)
+        in_channels = 2 if args.mask_attention else 3 # Attention Mask not implemented for 3-channel MIPs (xyz)
         if not args.mask_attention and args.proj_dim != 'all_mips':
             in_channels = 1
         print("Number of input channels:", in_channels)
@@ -140,7 +127,6 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
 
         net.load_pretrained_unequal(path) # ignore layers with size mismatch - needed when changing output channels
 
-
         if args.load_weights_second_model is not None:
             paths = sorted([el for el in os.listdir(args.load_weights_second_model) if 'best' in el])
             if args.load_keyword is not None:
@@ -150,6 +136,5 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
             print(f'Loading weights from {path}')
             print('-------')
             net_2.load_pretrained_unequal(path) # ignore layers with size mismatch - needed when changing output channels
-
 
     return net, net_2

@@ -1,7 +1,7 @@
 import torch
 import os
 #import torchvision
-from models.resnet_backbone import resnet18, resnet50, resnet101
+from models.classification.resnet_backbone import resnet18, resnet50, resnet101
 import torch.nn as nn
 
 class ResNet(nn.Module):

@@ -136,7 +136,7 @@ class DiceCE_Rec_Class_Loss(_Loss):
         target = target_ct_seg_class[:,1:2]# Take only PET data
 
 
-
+        # TODO - debug this
         input_class = torch.stack([torch.mean(el) for el in input_ct_pet_class[:,2:]]) # Take only PET data
         target_class = torch.stack([torch.mean(el) for el in target_ct_seg_class[:,2:]]) # Take only PET data
 
