@@ -20,7 +20,7 @@ The loss function can be set to either `Dice` or `Dice_CE` with the `--loss` fla
 The learning rate is set, e.g., by `--lr 0.0001`. You can set a learning rate step decay with `--lr_step_size 250` to decrease the learning rate by 10 at the 250th epoch.
 
 **Data Augmentations**
-To enable data augmentations (Rotations, Scaling etc. (see `utils/transforms.py')), just append the `--with_DA` flag.
+To enable data augmentations (Rotations, Scaling etc. (see `utils/transforms.py`)), append the `--with_DA` flag.
 
 **Inference**
 The default inference is full-volume inference, where the volumes are resized to a common resolution of `[400, 400, 128]` to fit into memory. This leads to distortion artifacts which can be solved by using the sliding window inference by simply appending the `--sliding_window` flag. 
@@ -36,7 +36,7 @@ The `--log_dir [YOUR_LOG_DIR]` flag sets where to store the `Tensorboard` logs o
 Specify the root directory where you have all the PET/CT nifti files by the `--in_dir [YOUR_DIR_ENDING_IN_FDG-PET-CT-Lesions/` flag.
 
 **Include Healthy Patients**
-To include the healthy patients (with empty GT-masks) just add `--with_negatives`. 
+To include the healthy patients (with empty GT-masks) add `--with_negatives`. 
 
 **Debugging** To debug any model on only 2 samples and spare time from data loading add the `--debug` flag.
 
