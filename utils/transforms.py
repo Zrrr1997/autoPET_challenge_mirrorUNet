@@ -7,6 +7,11 @@ from monai.transforms import(
     Orientationd,
     ScaleIntensityd,
     ScaleIntensityRanged,
+    EnsureChannelFirstd,
+    RandSpatialCropd,
+    NormalizeIntensityd,
+    RandScaleIntensityd,
+    RandShiftIntensityd,
     CropForegroundd,
     ConcatItemsd,
     RandCropByPosNegLabeld,
@@ -14,11 +19,37 @@ from monai.transforms import(
     RandRotated,
     RandFlipd,
     EnsureTyped,
-    Compose
+    Compose,
+    MapTransform,
+    CenterSpatialCropd
 )
 
 import numpy as np
 import torch
+
+class ConvertToMultiChannelBasedOnBratsClassesd(MapTransform):
+    """
+    Convert labels to multi channels based on brats classes:
+    label 1 is the peritumoral edema
+    label 2 is the GD-enhancing tumor
+    label 3 is the necrotic and non-enhancing tumor core
+    The possible classes are TC (Tumor core), WT (Whole tumor)
+    and ET (Enhancing tumor).
+
+    """
+
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.keys:
+            result = []
+            # merge label 2 and label 3 to construct TC
+            result.append(torch.logical_or(d[key] == 2, d[key] == 3))
+            # merge labels 1, 2 and 3 to construct WT
+            result.append(torch.logical_or(torch.logical_or(d[key] == 2, d[key] == 3), d[key] == 1))
+            # label 2 is ET
+            result.append(d[key] == 2)
+            d[key] = torch.stack(result, axis=0).float()
+        return d
 
 def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_min_pet=0, a_max_pet=15, spatial_size=[400, 400, 128], args=None):
     ################
@@ -29,6 +60,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
         pos_freq = pos_freqs[args.proj_dim]
         print('Positive patch sampling rate', pos_freq)
 
+    common_tasks = ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction', 'alt_transference']
 
     if args.dataset == 'ACRIN':
             train_transforms = Compose(
@@ -64,6 +96,48 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             )
             return train_transforms, val_transforms
 
+    if args.dataset == 'BraTS':
+            train_transforms = Compose(
+                [
+                    # load 4 Nifti images and stack them together
+                    LoadImaged(keys=["image", "label"]),
+                    EnsureChannelFirstd(keys="image"),
+                    EnsureTyped(keys=["image", "label"]),
+                    ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
+                    Orientationd(keys=["image", "label"], axcodes="RAS"),
+                    Spacingd(
+                        keys=["image", "label"],
+                        pixdim=(1.0, 1.0, 1.0),
+                        mode=("bilinear", "nearest"),
+                    ),
+                    RandSpatialCropd(keys=["image", "label"], roi_size=[224, 224, 144], random_size=False),
+                    RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
+                    RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+                    RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
+                    NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+                    RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
+                    RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
+                ]
+            )
+            val_transforms = Compose(
+                [
+                    LoadImaged(keys=["image", "label"]),
+                    EnsureChannelFirstd(keys="image"),
+                    EnsureTyped(keys=["image", "label"]),
+                    ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
+                    Orientationd(keys=["image", "label"], axcodes="RAS"),
+                    Spacingd(
+                        keys=["image", "label"],
+                        pixdim=(1.0, 1.0, 1.0),
+                        mode=("bilinear", "nearest"),
+                    ),
+                    CenterSpatialCropd(keys=["image", "label"], roi_size=[224, 224, 144]),
+
+                    NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+                ]
+            )
+            return train_transforms, val_transforms
+
     # Just generate MIP
     if args.generate_mip:
         train_transforms = Compose(
@@ -80,7 +154,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             ]
         )
     # Sliding Window Segmentation or Transference without DA
-    elif args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] and args.sliding_window and not args.with_DA:
+    elif args.task in common_tasks and args.sliding_window and not args.with_DA:
         if args.single_mod is None: # ct_pet_vol
             train_transforms = Compose(
                 [
@@ -141,7 +215,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             print(f"[ERROR] Wrong input modality!")
             exit()
     # Sliding Window Segmentation or Transference with DA
-    elif args.task in ['segmentation', 'transference'] and args.sliding_window and args.with_DA:
+    elif args.task in common_tasks and args.sliding_window and args.with_DA:
         if args.single_mod is None: # ct_pet_vol
             train_transforms = Compose(
                 [
@@ -217,7 +291,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             print(f"[ERROR] Wrong input modality!")
             exit()
     # Normal Segmentation or Transference (without DA)
-    elif (args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] or args.class_backbone == 'Ensemble') and not args.with_DA:
+    elif (args.task in common_tasks or args.class_backbone == 'Ensemble') and not args.with_DA:
         if args.single_mod is None: # input_mod == ct_pet_vol
             train_transforms = Compose(
                 [
@@ -269,7 +343,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
             print(f"[ERROR] Wrong input modality!")
             exit()
     # Normal Segmentation or Transference (with DA)
-    elif (args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] or args.class_backbone == 'Ensemble') and args.with_DA:
+    elif (args.task in common_tasks or args.class_backbone == 'Ensemble') and args.with_DA:
         print("Using transforms WITH data augmentation.")
         if args.single_mod is None: # input_mod == ct_pet_vol
             train_transforms = Compose(
@@ -375,7 +449,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
     ### VALIDATION ###
     ##################
     # Normal Segmentation or Transference
-    if (args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] or args.class_backbone == 'Ensemble') and not args.sliding_window:
+    if (args.task in common_tasks or args.class_backbone == 'Ensemble') and not args.sliding_window:
         if args.single_mod is None: # input_mod == ct_pet_vol
             val_transforms= Compose(
                 [
@@ -433,7 +507,7 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
         else:
             print(f"[ERROR] Wrong input modality!")
             exit()
-    elif (args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'reconstruction'] or args.class_backbone == 'Ensemble') and args.sliding_window:
+    elif (args.task in common_tasks or args.class_backbone == 'Ensemble') and args.sliding_window:
         if args.single_mod is None: # input_mod == ct_pet_vol
             val_transforms= Compose(
                 [

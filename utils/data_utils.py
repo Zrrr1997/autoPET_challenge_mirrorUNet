@@ -4,6 +4,7 @@ import os
 # MONAI
 from monai.utils import set_determinism
 from monai.data import Dataset, CacheDataset, PersistentDataset, ThreadDataLoader
+from monai.apps import DecathlonDataset
 from monai.data import list_data_collate
 
 # Utils
@@ -197,38 +198,58 @@ def read_fns(in_dir=None, args=None):
 
 def prepare_loaders(in_dir=None, pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_min_pet=0, a_max_pet=15, spatial_size=[400, 400, 128], cache=True, args=None):
 
+    train_transforms, val_transforms = prepare_transforms(pixdim=pixdim, a_min_ct=a_min_ct, a_max_ct=a_max_ct, a_min_pet=a_min_pet, a_max_pet=a_max_pet, spatial_size=spatial_size, args=args)
     cache = not args.no_cache
 
-    train_files, val_files = read_fns(in_dir=in_dir, args=args)
+    if args.dataset == 'BraTS':
+        train_ds = DecathlonDataset(
+            root_dir=in_dir,
+            task="Task01_BrainTumour",
+            transform=train_transforms,
+            section="training",
+            download=True,
+            cache_rate=0.0,
+            num_workers=4,
+        )
+        val_ds = DecathlonDataset(
+            root_dir=in_dir,
+            task="Task01_BrainTumour",
+            transform=val_transforms,
+            section="validation",
+            download=False,
+            cache_rate=0.0,
+            num_workers=4,
+        )
+        print('Training samples:', len(train_ds), ' Validation samples:', len(val_ds))
 
-    train_transforms, val_transforms = prepare_transforms(pixdim=pixdim, a_min_ct=a_min_ct, a_max_ct=a_max_ct, a_min_pet=a_min_pet, a_max_pet=a_max_pet, spatial_size=spatial_size, args=args)
-
-    if cache:
-        if args.task == 'classification' or args.generate_mip: # No need for persistent storage
-            train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=1.0, copy_cache=False)
-            val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=1.0, copy_cache=False)
-        else:
-            input_mod = prepare_input_mod(args)
-            task_cache_dir = f'./cache/{args.task}/{input_mod}/sliding_window_{args.sliding_window}/with_DA_{args.with_DA}'
-
-            if args.task in ['transference', 'fission', 'fission_classification', 'reconstruction']:
-                task_cache_dir = task_cache_dir.replace(args.task, 'segmentation') # Segmentation and args.task should share the cache dir
-            if args.debug:
-                task_cache_dir = os.path.join(task_cache_dir, 'debug')
-            if args.with_negatives:
-                task_cache_dir = os.path.join(task_cache_dir, 'with_negatives')
-            if args.dataset == 'ACRIN':
-                task_cache_dir = os.path.join(task_cache_dir, args.dataset)
-
-            print(f"Using cache directory: {task_cache_dir}")
-            train_ds = PersistentDataset(data=train_files, transform=train_transforms, cache_dir=os.path.join(task_cache_dir, 'train'))
-            if args.debug:
-                val_ds = PersistentDataset(data=val_files, transform=val_transforms, cache_dir=os.path.join(task_cache_dir, 'train'))
+    else: # AutoPET
+        train_files, val_files = read_fns(in_dir=in_dir, args=args)
+        if cache:
+            if args.task == 'classification' or args.generate_mip: # No need for persistent storage
+                train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=1.0, copy_cache=False)
+                val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=1.0, copy_cache=False)
             else:
-                val_ds = PersistentDataset(data=val_files, transform=val_transforms, cache_dir=os.path.join(task_cache_dir, 'val'))
-    else:
-        train_ds = Dataset(data=train_files, transform=train_transforms)
-        val_ds = Dataset(data=val_files, transform=val_transforms)
+                input_mod = prepare_input_mod(args)
+                task_cache_dir = f'./cache/{args.task}/{input_mod}/sliding_window_{args.sliding_window}/with_DA_{args.with_DA}'
+
+                if args.task in ['transference', 'fission', 'fission_classification', 'reconstruction', 'alt_transference']:
+                    task_cache_dir = task_cache_dir.replace(args.task, 'segmentation') # Segmentation and args.task should share the cache dir
+                if args.debug:
+                    task_cache_dir = os.path.join(task_cache_dir, 'debug')
+                if args.with_negatives:
+                    task_cache_dir = os.path.join(task_cache_dir, 'with_negatives')
+                if args.dataset == 'ACRIN':
+                    task_cache_dir = os.path.join(task_cache_dir, args.dataset)
+
+                print(f"Using cache directory: {task_cache_dir}")
+                train_ds = PersistentDataset(data=train_files, transform=train_transforms, cache_dir=os.path.join(task_cache_dir, 'train'))
+                if args.debug:
+                    val_ds = PersistentDataset(data=val_files, transform=val_transforms, cache_dir=os.path.join(task_cache_dir, 'train'))
+                else:
+                    val_ds = PersistentDataset(data=val_files, transform=val_transforms, cache_dir=os.path.join(task_cache_dir, 'val'))
+        else:
+            train_ds = Dataset(data=train_files, transform=train_transforms)
+            val_ds = Dataset(data=val_files, transform=val_transforms)
 
     train_loader = ThreadDataLoader(train_ds,
                               batch_size=args.batch_size,
@@ -243,4 +264,4 @@ def prepare_loaders(in_dir=None, pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct
                               #pin_memory=torch.cuda.is_available() # removed due to EnsureTyped transform
                               )
 
-    return train_loader, val_loader, train_files, val_files
+    return train_loader, val_loader

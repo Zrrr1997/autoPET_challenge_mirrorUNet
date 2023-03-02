@@ -211,7 +211,6 @@ class Mirror_UNet(nn.Module):
 
 
 
-
         self.down_1_1 = self._get_down_layer(channel_list[0], channel_list[1], 2, True).to(device)
         self.down_2_1 = self._get_down_layer(channel_list[0], channel_list[1], 2, True).to(device)
         self.down_1_2 = self._get_down_layer(channel_list[1], channel_list[2], 2, False).to(device)

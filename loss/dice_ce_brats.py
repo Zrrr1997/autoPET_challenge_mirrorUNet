@@ -17,7 +17,7 @@ from monai.transforms import AsDiscrete
 
 
 # Extension of the DiceCE loss with Reconstuction
-class DiceCE_Rec_Class_Loss(_Loss):
+class DiceCE_BraTS_Loss(_Loss):
     def __init__(
         self,
         include_background: bool = True,
@@ -32,10 +32,8 @@ class DiceCE_Rec_Class_Loss(_Loss):
         smooth_dr: float = 1e-5,
         batch: bool = False,
         ce_weight: Optional[torch.Tensor] = None,
-        lambda_dice: float = 0.5,
-        lambda_ce: float = 0.5,
-        lambda_rec: float = 1.0,
-        lambda_class: float = 0.5
+
+        args=None
     ) -> None:
         """
         Args:
@@ -77,29 +75,30 @@ class DiceCE_Rec_Class_Loss(_Loss):
         super().__init__()
         reduction = look_up_option(reduction, DiceCEReduction).value
 
+
+        # include_background should be set to True if the dice loss stagnates because the error signal is too weak from the small tumor lesions
         self.dice = DiceLoss(to_onehot_y=to_onehot_y, softmax=softmax, include_background=include_background, batch=batch)
 
 
         self.cross_entropy = nn.CrossEntropyLoss(weight=ce_weight, reduction=reduction)
 
-        self.ce_class = nn.BCELoss()
+        self.dice_edema = DiceLoss(to_onehot_y=to_onehot_y, softmax=softmax, include_background=include_background, batch=batch)
+        self.cross_entropy_edema = nn.CrossEntropyLoss(weight=ce_weight, reduction=reduction)
 
-        self.rec_loss = nn.MSELoss()
-        if lambda_dice < 0.0:
-            raise ValueError("lambda_dice should be no less than 0.0.")
-        if lambda_ce < 0.0:
-            raise ValueError("lambda_ce should be no less than 0.0.")
-        self.lambda_dice = lambda_dice
-        self.lambda_ce = lambda_ce
-        self.lambda_rec = lambda_rec
-        self.lambda_class = lambda_class
+        self.dice_whole = DiceLoss(to_onehot_y=to_onehot_y, softmax=softmax, include_background=include_background, batch=batch)
+        self.cross_entropy_whole = nn.CrossEntropyLoss(weight=ce_weight, reduction=reduction)
+
+
 
         self.post_label = AsDiscrete(to_onehot=2)
         self.post_pred = AsDiscrete(argmax=True, to_onehot=2)
 
+        self.args = args
 
 
-    def ce(self, input: torch.Tensor, target: torch.Tensor):
+
+
+    def ce(self, input: torch.Tensor, target: torch.Tensor, tumor='core'):
         """
         Compute CrossEntropy loss for the input and target.
         Will remove the channel dim according to PyTorch CrossEntropyLoss:
@@ -115,10 +114,16 @@ class DiceCE_Rec_Class_Loss(_Loss):
         else:
             target = torch.squeeze(target, dim=1)
         target = target.long()
-        return self.cross_entropy(input, target)
+        if tumor == 'core':
+            return self.cross_entropy(input, target)
+        elif tumor == 'edema':
+            return self.cross_entropy_edema(input, target)
+        else:
+            return self.cross_entropy_whole(input, target)
 
 
-    def forward(self, input_ct_pet_class: torch.Tensor, target_ct_seg_class: torch.Tensor) -> torch.Tensor:
+
+    def forward(self, input_ct_pet: torch.Tensor, target_ct_seg: torch.Tensor) -> torch.Tensor:
         """
         Args:
             input: the shape should be BNH[WD].
@@ -131,31 +136,47 @@ class DiceCE_Rec_Class_Loss(_Loss):
         """
 
 
+        if self.args.task == 'fission':
+            input = input_ct_pet[:,2:] # Take only SEG_pred data from lightweight decoder
 
-        input = input_ct_pet_class[:,1:2] # Take only PET data
-        target = target_ct_seg_class[:,1:2]# Take only PET data
+            target = target_ct_seg[:,2:]# Take only SEG_gt data
+            #print(target_ct_seg.shape)
+            #exit()
+            input_rec = input_ct_pet[:,:2].unsqueeze(1)
+            target_rec = target_ct_seg[:,:2].unsqueeze(1)
 
 
-        # TODO - debug this
-        input_class = torch.stack([torch.mean(el) for el in input_ct_pet_class[:,2:]]) # Take only PET data
-        target_class = torch.stack([torch.mean(el) for el in target_ct_seg_class[:,2:]]) # Take only PET data
 
 
-        input_rec = input_ct_pet_class[:,0].unsqueeze(1) # Take only
-        target_rec = target_ct_seg_class[:,0].unsqueeze(1) # Take only CT gt
+        else:
+            print(f'[ERROR] No such task implemented for this loss {self.args.task}')
+            exit()
 
+
+        core = input_ct_pet[:,:2]
+        target_core = target_ct_seg[:, :1]
+        whole = input_ct_pet[:,2:4]
+        target_whole = target_ct_seg[:, 1:2]
+        edema = input_ct_pet[:,4:]
+        target_edema = target_ct_seg[:, 2:]
 
         if len(input.shape) != len(target.shape):
             raise ValueError("the number of dimensions for input and target should be the same.")
 
-        dice_loss = self.dice(input, target)
-        ce_loss = self.ce(input, target)
-        class_loss = self.ce_class(input_class, target_class)
+        dice_loss_core = self.dice(core, target_core)
+        ce_loss_core = self.ce(core, target_core, tumor='core')
+        dice_loss_whole = self.dice_whole(whole, target_whole)
+        ce_loss_whole = self.ce(whole, target_whole, tumor='whole')
+        dice_loss_edema = self.dice(edema, target_edema)
+        ce_loss_edema = self.ce(edema, target_edema, tumor='edema')
 
-        rec_loss = self.rec_loss(input_rec, target_rec)
+        if self.args.brats_ablation:
+            total_loss: torch.Tensor = self.args.lambda_core * (dice_loss_core + ce_loss_core) + self.args.lambda_edema * (dice_loss_edema + dice_loss_edema)
+            total_loss /= 2
+        else:
+            total_loss: torch.Tensor = self.args.lambda_core * (dice_loss_core + ce_loss_core) + self.args.lambda_whole * (dice_loss_whole + ce_loss_whole) + self.args.lambda_edema * (dice_loss_edema + dice_loss_edema)
+            total_loss /= 3
 
 
-        total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_dice * ce_loss + self.lambda_rec * rec_loss + self.lambda_class * class_loss
-        print('Total loss', total_loss)
 
         return total_loss

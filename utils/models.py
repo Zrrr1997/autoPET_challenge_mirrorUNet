@@ -15,8 +15,20 @@ import os
 
 def prepare_model(device=None, out_channels=None, args=None, second=False):
     net_2 = None
+    if args.brats_unet:
+        net = UNet(
+            spatial_dims=3,
+            in_channels=2,
+            out_channels=6, # softmax output (1 channel per class, i.e. Fg/Bg), 1 channel only for reconstruction (SSL pre-training)
+            channels=(16, 32, 64, 128, 256),
+            strides=(2, 2, 2, 2),
+            num_res_units=2,
+            norm=Norm.BATCH,
+            device=device
+        ).to(device)
+        print("Using BraTS UNet")
     # Segmentation / Reconstruction
-    if (args.single_mod is not None or args.early_fusion) and args.task != 'classification' and args.class_backbone != 'Ensemble':
+    elif (args.single_mod is not None or args.early_fusion) and args.task != 'classification' and args.class_backbone != 'Ensemble':
         in_channels = 2 if args.early_fusion and args.load_weights_second_model is None else 1
         in_channels = in_channels + 1 if args.mask_attention else in_channels
         net = UNet(

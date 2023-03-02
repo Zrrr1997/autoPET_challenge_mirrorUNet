@@ -50,7 +50,7 @@ def prepare_parser(parser):
                          help='Only evaluate without training.')
     parser.add_argument('--no_cache', default=False, action='store_true',
                          help='Toggle using PersistentDataset for cache.')
-    parser.add_argument('--in_dir', type=str, default='/hkfs/work/workspace/scratch/zk6393-zrrr_ws/zk6393-test_zrrr/autoPET/FDG-PET-CT-Lesions/',
+    parser.add_argument('--in_dir', type=str, default='/home/anthropomatik/zk6393/zk6393-zrrr_ws/zk6393-test_zrrr/autoPET/FDG-PET-CT-Lesions/',
                          help='Dataset root directory.')
 
     # Classification
@@ -79,17 +79,23 @@ def prepare_parser(parser):
                          help='Load best validation model from the given directory.')
     parser.add_argument('--load_keyword', type=str, default=None,
                              help='Keyword to search for in the weights file.')
-
+    parser.add_argument('--brats_unet', default=False, action='store_true',
+                         help='Use U-Net for the BraTS tumor segmentation.')
     ## Tasks
     parser.add_argument('--task', type=str, default='segmentation',
-                         help='Training task for the model: [segmentation, reconstruction, classification, transference, fission, fission_classification]')
+                         help='Training task for the model: [segmentation, reconstruction, classification, transference, fission, fission_classification, alt_transference]')
     parser.add_argument('--early_fusion', default=False, action='store_true',
                          help='Train UNet with early fusion (channel concatenation).')
     parser.add_argument('--mask_attention', default=False, action='store_true',
                          help='Concatenate the prior distribution of tumor locations to the input channel (mask_attention).')
     parser.add_argument('--pretrained', default=False, action='store_true',
                         help='True if loading pre-trained weights for initialization (required for tranference pre-initialization).')
-
+    parser.add_argument('--ct_ablation', default=False, action='store_true',
+                         help='Train only with the CT modality for the ablation study.')
+    parser.add_argument('--pet_ablation', default=False, action='store_true',
+                         help='Train only with the PET modality for the ablation study.')
+    parser.add_argument('--brats_ablation', default=False, action='store_true',
+                         help='BraTS ablation study.')
 
     # Classification
     parser.add_argument('--class_backbone', type=str, default='ResNet',
@@ -119,6 +125,12 @@ def prepare_parser(parser):
                         help='Weight for the segmentation loss in the transference (experiment 2).')
     parser.add_argument('--lambda_cls', type=float, default=1e-2,
                         help='Weight for the classification loss in the fission_classification (experiment 2).')
+    parser.add_argument('--lambda_core', type=float, default=0.333,
+                        help='Weight for the tumor core in the BraTS experiment.')
+    parser.add_argument('--lambda_edema', type=float, default=0.333,
+                        help='Weight for the tumor edema in the BraTS experiment.')
+    parser.add_argument('--lambda_whole', type=float, default=0.333,
+                        help='Weight for the whole tumor (bottleneck regularization) in the BraTS experiment.')
     parser.add_argument('--common_bottom', default=False, action='store_true',
                         help='Common bottom layer instead of common DOWN layer for Mirror UNet.')
     parser.add_argument('--self_supervision', type=str, default='L2',
@@ -126,7 +138,8 @@ def prepare_parser(parser):
     parser.add_argument('--n_masks', type=int, default=1,
                         help='Number of masks to use for the MAE in the transference (experiment 2).')
     parser.add_argument('--dataset', type=str, default='AutoPET',
-                         help='Dataset to use: [AutoPET, ACRIN].')
+                         help='Dataset to use: [AutoPET, BraTS].')
+
 
 
     # Utils

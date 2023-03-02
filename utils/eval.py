@@ -15,13 +15,13 @@ from ignite.engine import (
 from monai.inferers import sliding_window_inference
 from monai.data import decollate_batch
 from monai.metrics import compute_meandice
-from monai.transforms import AddChannel, RandGaussianNoise, RandCoarseShuffle
+from monai.transforms import AddChannel, RandGaussianNoise, RandCoarseShuffle, AsDiscrete, Lambda
 
 # TORCH
 import torch
 import torch.nn.functional as nnf
 
-
+from utils.utils import save_nifti_img, brats_post_label_core, brats_post_label_edema, brats_post_pred_core, brats_post_pred_edema
 
 def f_class_label(class_label, batch):
     if class_label != 0:
@@ -44,7 +44,20 @@ def prepare_batch(batch, device=None, input_mod=None, non_blocking=False, task=N
     else:
         # Append the attention tensor to all volumes in the batch
         inp = torch.cat((torch.cat(batch[input_mod].shape[0] * [attention]), batch[input_mod]), dim=1) # dim=1 is the channel
+    if args.dataset == 'BraTS':
+        inp = torch.cat([inp[:,2:3], inp[:,:1]], dim=1) # FLAIR + T2w
+        label = batch["label"]
+        core = label[:, 2:]
+        edema =  label[:,:1]
+        whole = core + edema
 
+        core = (core > 0) * 1.0
+        edema = (edema > 0) * 1.0
+        whole = (whole > 0) * 1.0
+        edema = whole - core
+
+        seg = torch.cat([core, whole, edema], dim=1) # Core, Edema
+        return _prepare_batch((inp, seg), device, non_blocking)
     ### Segmentation ###
     if task == 'segmentation':
         return _prepare_batch((inp, batch["seg"]), device, non_blocking)
@@ -98,7 +111,17 @@ def prepare_batch(batch, device=None, input_mod=None, non_blocking=False, task=N
                 return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([inp, batch['seg']], dim=1)), device, non_blocking)
             elif args.task == 'fission_classification':
                 return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([inp, batch['seg'], cls], dim=1)), device, non_blocking)
+        # Ablation study for this paper:
+        # Multi-modal Learning from Unpaired Images: Application to Multi-organ Segmentation in CT and MRI, WACV 2018, Vilindria et al.
+        elif task == 'alt_transference': # Alternating Transference
+            ct_vol = inp[:, :1]
+            pet_vol = inp[:, 1:]
+            cls = torch.ones(ct_vol.shape).to(device) # Encode modality index - 0: CT, 1: PET
 
+            if np.random.choice([True, False], p=[0.0, 1.0]):
+                return _prepare_batch((torch.cat([cls * 0, ct_vol], dim=1), batch["seg"]), device, non_blocking)
+            else:
+                return _prepare_batch((torch.cat([cls * 1, pet_vol], dim=1), batch["seg"]), device, non_blocking)
         else:
             print('[ERROR] No such self-supervision task is defined.')
 
@@ -220,10 +243,83 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
 
     net.train()
     return dice_F1, dice_bg
+def braTS_eval(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=None, writer=None, trainer=None):
+    #if not args.sliding_window and not args.save_nifti:
+    #    evaluator.run(val_loader)
+    post_label_core = Lambda(func=lambda x: brats_post_label_core(x))
+    post_label_edema = Lambda(func=lambda x: brats_post_label_edema(x))
+    post_pred_core = Lambda(func=lambda x: brats_post_pred_core(x))
+    post_pred_edema = Lambda(func=lambda x: brats_post_pred_edema(x))
+
+
+
+    discrete = AsDiscrete(argmax=True, to_onehot=2)
+
+    dices_fg, dices_bg, = [], []
+    dices_edema = []
+    dices_core = []
+    net.eval()
+    with torch.no_grad():
+        for i, val_data in tqdm(enumerate(val_loader)):
+            (inp, label) = prepare_batch(val_data, device=device, input_mod=input_mod, args=args, task='none')
+
+            mask_out = net(inp)
+
+
+            mask_core = torch.stack([post_pred_core(i) for i in decollate_batch(mask_out)])
+            label_core = torch.stack([post_label_core(i) for i in decollate_batch(label)])
+
+            mask_edema = torch.stack([post_pred_edema(i) for i in decollate_batch(mask_out)])
+            label_edema = torch.stack([post_label_edema(i) for i in decollate_batch(label)])
+
+            mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
+            label = torch.stack([post_label(i) for i in decollate_batch(label)])
+
+            dice = compute_meandice(mask_out, label, include_background=True)
+            dice_F1 = compute_meandice(mask_out, label, include_background=False)
+
+            dice_core = compute_meandice(mask_core, label_core, include_background=False)
+            dice_edema = compute_meandice(mask_edema, label_edema, include_background=False)
+
+            dices_core += list(dice_core.cpu().detach().numpy().flatten())
+            dices_edema += list(dice_edema.cpu().detach().numpy().flatten())
+
+            dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
+            dices_bg += list(dice.cpu().detach().numpy().flatten())
+
+
+            if args.save_nifti:
+                save_nifti_img('brats_label', label[0][1].cpu().detach().numpy())
+                save_nifti_img('brats_core', mask_core[0][1].cpu().detach().numpy())
+                save_nifti_img('brats_edema', mask_edema[0][1].cpu().detach().numpy())
+                save_nifti_img('brats_whole', mask_out[0][1].cpu().detach().numpy())
+                save_nifti_img('input', inp[0][0].cpu().detach().numpy())
+                save_nifti_img('input_2', inp[0][1].cpu().detach().numpy())
+                exit()
+
+
+    dice_F1 = np.nanmean(np.array(dices_fg))
+    dice_bg = np.nanmean(np.array(dices_bg))
+    dice_core = np.nanmean(np.array(dices_core))
+    dice_edema = np.nanmean(np.array(dices_edema))
+    print('Mean dice foreground:', dice_F1)
+    #print('Mean dice background:', dice_bg)
+    print('Mean dice (tumor core)', dice_core)
+    print('Mean dice (tumor edema)', dice_edema)
+
+    writer.add_scalar('Dice Whole Tumor', dice_F1, trainer.state.iteration)
+    writer.add_scalar('Dice Core', dice_core, trainer.state.iteration)
+    writer.add_scalar('Dice Edema', dice_edema, trainer.state.iteration)
+
+
+    net.train()
+    return dice_F1, dice_bg
+
 
 def fission(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=None, writer=None, trainer=None):
-    if not args.sliding_window and not args.save_nifti:
-        evaluator.run(val_loader)
+    #if not args.sliding_window and not args.save_nifti:
+    #    evaluator.run(val_loader)
+
 
     dices_fg, dices_bg, rec_loss = [], [], []
     class_pred, class_label = [], []

@@ -16,10 +16,12 @@ import cv2
 import os
 import torch
 import numpy as np
+import nibabel as nib
 from tqdm import tqdm
 
 from loss.dice_ce_rec import DiceCE_Rec_Loss # Transference, Fission
 from loss.dice_ce_rec_class import DiceCE_Rec_Class_Loss # Fission + Classification
+from loss.dice_ce_brats import DiceCE_BraTS_Loss
 
 # Visualization
 from torchinfo import summary
@@ -41,13 +43,16 @@ def prepare_out_channels(args):
                                     'segmentation_classification',
                                     'transference',
                                     'fission',
-                                    'fission_classification'] or args.early_fusion else 1
+                                    'fission_classification',
+                                    'alt_transference'] or args.early_fusion else 1
 
     print('Number of output channels', out_channels)
     return out_channels
 
 
 def prepare_input_mod(args):
+    if args.dataset == 'BraTS':
+        return 'image'
     input_mod = "ct_pet_vol" if args.single_mod is None or args.early_fusion else args.single_mod
     input_mod = f'mip_{args.proj_dim}' if args.proj_dim is not None and args.proj_dim != "all_mips" else input_mod
     input_mod = "all_mips" if args.proj_dim == 'all_mips' else input_mod
@@ -61,12 +66,15 @@ def check_data_shape(train_loader, input_mod, args):
 
     print('Input shape check:', check_data[input_mod].shape)
     if args.task == 'segmentation':
-        print('Segmentation mask shape check:', check_data["seg"].shape)
+        if args.dataset == 'BraTS':
+            print('Segmentation mask shape check:', check_data["label"].shape)
+        else:
+            print('Segmentation mask shape check:', check_data["seg"].shape)
+            print('Class Label', check_data["class_label"])
+
 
         mip_x = torch.max(check_data[input_mod][0][0], axis=0)[0]
-        mip_x = nnf.interpolate(mip_x.unsqueeze(dim=0).unsqueeze(dim=0), size=(400, 400), mode='bicubic', align_corners=False).cpu().detach().numpy()[0][0]
-        print('min_val_mip:', np.min(mip_x), 'max_val_mip:', np.max(mip_x))
-        print('mip_x.shape', mip_x.shape)
+        print('min_val:', np.min(mip_x), 'max_val:', np.max(mip_x))
 
     elif args.task == 'classification':
         mip_x = check_data[input_mod][0][0].cpu().detach().numpy()
@@ -74,11 +82,10 @@ def check_data_shape(train_loader, input_mod, args):
         print('mip_x.shape', mip_x.shape)
 
 
-
-    print('Label', check_data["class_label"])
-
 def prepare_loss(args):
-    if args.task == 'segmentation' or args.task == 'segmentation_classification':
+    if args.dataset == 'BraTS':
+        loss = DiceCE_BraTS_Loss(to_onehot_y=True, softmax=True, include_background=args.include_background, batch=True, args=args)
+    elif args.task in ['segmentation', 'alt_transference']:
         if args.loss == 'DiceCE':
             loss = DiceCELoss(to_onehot_y=True, softmax=True, include_background=args.include_background, batch=True)
         elif args.loss == 'Dice':
@@ -111,7 +118,7 @@ def prepare_attention(args):
     return attention
 
 def prepare_val_metrics(args):
-    if args.task in ['segmentation', 'segmentation_classification', 'transference', 'fission', 'fission_classification']:
+    if args.task in ['segmentation', 'segmentation_classification', 'transference', 'fission', 'fission_classification', 'alt_transference']:
         metric_name = "Mean_Dice_F1"
         metric_name_2 = "Mean_Dice"
         val_metrics = {metric_name: MeanDice(include_background=False), metric_name_2: MeanDice()}
@@ -125,6 +132,14 @@ def prepare_val_metrics(args):
         print("[ERROR] Validations metrics for such a task not found.")
         exit()
     return val_metrics
+
+def save_nifti_img(name, im):
+    print(name, im.shape)
+    affine = np.eye(4)
+    affine[0][0] = -1
+    ni_img = nib.Nifti1Image(im, affine=affine)
+    ni_img.header.get_xyzt_units()
+    ni_img.to_filename(f'{name}.nii.gz')
 
 # Assume x is in shape CHWD
 def transference_post_pred(x):
@@ -150,6 +165,36 @@ def fission_post_pred(x):
     else:
         return discrete(x)
 
+def brats_post_pred(x):
+    num_classes=2
+    discrete = AsDiscrete(argmax=True, to_onehot=num_classes)
+    #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
+    return discrete(x[:2] + x[4:]) # Late fusion of Core and Edema predictions
+def brats_post_label(x):
+    num_classes = 2
+    discrete = AsDiscrete(to_onehot=num_classes)
+    return discrete(x[1:2]) # Whole tumors
+
+def brats_post_pred_core(x):
+    num_classes=2
+    discrete = AsDiscrete(argmax=True, to_onehot=num_classes)
+    #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
+    return discrete(x[:2]) # Core prediction
+def brats_post_label_core(x):
+    num_classes = 2
+    discrete = AsDiscrete(to_onehot=num_classes)
+    return discrete(x[:1]) # Core tumor
+
+def brats_post_pred_edema(x):
+    num_classes=2
+    discrete = AsDiscrete(argmax=True, to_onehot=num_classes)
+    #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
+    return discrete(x[4:]) # Edema predictions
+def brats_post_label_edema(x):
+    num_classes = 2
+    discrete = AsDiscrete(to_onehot=num_classes)
+    return discrete(x[2:]) # Edemas of tumors
+
 
 def fission_post_label(x):
     num_classes=2
@@ -169,7 +214,11 @@ def fission_cls_post_label(x):
 
 def prepare_post_fns(args):
     num_classes = 2
-    if args.task == 'segmentation':
+    if args.dataset == 'BraTS':
+        post_pred = Lambda(func=lambda x: brats_post_pred(x))
+        post_label = Lambda(func=lambda x: brats_post_label(x))
+
+    elif args.task in ['segmentation', 'alt_transference']:
         post_pred = AsDiscrete(argmax=True, to_onehot=num_classes)
         post_label = AsDiscrete(to_onehot=num_classes)
     elif args.task == 'reconstruction':

@@ -314,6 +314,8 @@ class UNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         init_shape = x.shape
 
+
+
         '''
         if init_shape[2] < 400 and False:
             # sliding window inference # TODO maybe add argument about sliding_window instead of this

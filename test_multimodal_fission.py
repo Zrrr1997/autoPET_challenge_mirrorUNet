@@ -67,7 +67,7 @@ if __name__ == "__main__":
 
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128] # Fix axial resolution for non-sliding window inference
-    train_loader, val_loader, train_files, val_files = prepare_loaders(in_dir=args.in_dir, spatial_size=spatial_size, args=args)
+    train_loader, val_loader = prepare_loaders(in_dir=args.in_dir, spatial_size=spatial_size, args=args)
 
     # Tensorboard stats
     writer = SummaryWriter(log_dir = args.log_dir)
@@ -114,12 +114,35 @@ if __name__ == "__main__":
     def prepare_batch(batch, device=None, non_blocking=False, task=args.task):
         if not args.mask_attention:
             inp = batch[input_mod]
+            if args.ct_ablation:
+                ct_vol = inp[:, :1]
+                inp = torch.cat([ct_vol, ct_vol], dim=1)
+            if args.pet_ablation:
+                assert not args.ct_ablation
+                pet_vol = inp[:, 1:]
+                inp = torch.cat([pet_vol, pet_vol], dim=1)
         else:
             # Append the attention tensor to all volumes in the batch
             inp = torch.cat((torch.cat(batch[input_mod].shape[0] * [attention]), batch[input_mod]), dim=1) # dim=1 is the channel
 
+        # BraTS ablation
+        if args.dataset == 'BraTS':
+            inp = torch.cat([inp[:,2:3], inp[:,:1]], dim=1) # FLAIR + T2w
+            label = batch["label"]
+            core = label[:, 2:]
+            edema =  label[:,:1]
+            whole = core + edema
+
+            core = (core > 0) * 1.0
+            edema = (edema > 0) * 1.0
+            whole = (whole > 0) * 1.0
+            edema = whole - core
+
+            seg = torch.cat([core, whole, edema], dim=1) # Core, Edema
+
+            return _prepare_batch((inp, seg), device, non_blocking)
         ### Segmentation ###
-        if task == 'segmentation':
+        elif task in 'segmentation' or args.dataset == 'BraTS':
             return _prepare_batch((inp, batch["seg"]), device, non_blocking)
         ### Reconstruction ###
         elif task == 'reconstruction':
@@ -175,6 +198,18 @@ if __name__ == "__main__":
 
             else:
                 print('[ERROR] No such self-supervision task is defined.')
+        # Ablation study for this paper:
+        # Multi-modal Learning from Unpaired Images: Application to Multi-organ Segmentation in CT and MRI, WACV 2018, Vilindria et al.
+        elif task == 'alt_transference': # Alternating Transference
+            ct_vol = inp[:, :1]
+            pet_vol = inp[:, 1:]
+            cls = torch.ones(ct_vol.shape).to(device) # Encode modality index - 0: CT, 1: PET
+
+            if np.random.choice([True, False], p=[0.5, 0.5]):
+                return _prepare_batch((torch.cat([cls * 0, ct_vol], dim=1), batch["seg"]), device, non_blocking)
+            else:
+                return _prepare_batch((torch.cat([cls * 1, pet_vol], dim=1), batch["seg"]), device, non_blocking)
+
 
         else:
             print("[ERROR]: No such task exists...")
@@ -187,12 +222,11 @@ if __name__ == "__main__":
             score = engine.state.metrics['Accuracy']
         elif args.task == 'reconstruction':
             score = engine.state.metrics['MSE']
-        else: # Segmentation, Transference, Fission
+        else: # Segmentation, Transference, Fission, Alt_Transference
             score = engine.state.metrics['Mean_Dice']
         return score
     def default_score_fn_F1(engine):
         return engine.state.metrics['Mean_Dice_F1'] # Only foreground dice (tumors)
-
 
     trainer = create_supervised_trainer(
         net, opt, loss, device, False, prepare_batch=prepare_batch
@@ -235,11 +269,11 @@ if __name__ == "__main__":
         output_transform=lambda x, y, y_pred: ([post_pred(i) for i in decollate_batch(y_pred)], [post_label(i) for i in decollate_batch(y)]),
         prepare_batch=prepare_batch,
     )
-    if args.task in ['classification', 'segmentation', 'transference', 'reconstruction', 'fission', 'fission_classification']:
+    if args.task in ['classification', 'segmentation', 'transference', 'reconstruction', 'fission', 'fission_classification', 'alt_transference']:
         checkpoint_handler_best_val = ModelCheckpoint(
             args.ckpt_dir, "net_best_val", n_saved=1, require_empty=False, score_function=default_score_fn
         )
-        if args.task in ['segmentation', 'transference', 'fission', 'fission_classification']:
+        if args.task in ['segmentation', 'transference', 'fission', 'fission_classification', 'alt_transference']:
             checkpoint_handler_best_val_F1 = ModelCheckpoint(
                 args.ckpt_dir, "net_best_val_F1", n_saved=1, require_empty=False, score_function=default_score_fn_F1
             )
@@ -253,6 +287,20 @@ if __name__ == "__main__":
 
         global best_f1_dice, best_bg_dice
 
+        if args.dataset == 'BraTS':
+            f1_dice, bg_dice = braTS_eval(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=input_mod, writer=writer, trainer=trainer)
+            writer.add_scalar('F1 Dice', f1_dice, trainer.state.iteration)
+            writer.add_scalar('BG Dice', bg_dice, trainer.state.iteration)
+
+            if f1_dice > best_f1_dice:
+                torch.save(net.state_dict(), os.path.join(args.ckpt_dir, f'best_f1_dice.pth'))
+                best_f1_dice = f1_dice
+                with open(os.path.join(args.ckpt_dir, f'best_f1_dice.txt'), 'a+') as f:
+                    f.write(str(best_f1_dice) + '\n')
+
+            if args.evaluate_only:
+                exit()
+            return
         #####################################
         ##         CLASSIFICATION          ##
         #####################################
@@ -263,7 +311,7 @@ if __name__ == "__main__":
         #####################################
         ##         SEGMENTATION            ##
         #####################################
-        if args.task=='segmentation':
+        if args.task in ['segmentation', 'alt_transference']:
             # Late fusion of two networks
             if net_2 is not None and args.load_weights_second_model is not None:
                 f1_dice, bg_dice = segmentation_late_fusion(evaluator, val_loader, net, net_2, args, post_pred, post_label, device)

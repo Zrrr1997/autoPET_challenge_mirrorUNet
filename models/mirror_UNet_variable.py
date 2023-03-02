@@ -157,6 +157,7 @@ class Mirror_UNet(nn.Module):
         self.task = task
         self.args = args
         self.learnable_th = nn.Parameter(torch.tensor(0.5), requires_grad=True)
+        self.modality = 'none'
 
 
         self.down_1 = nn.ModuleList()
@@ -175,6 +176,7 @@ class Mirror_UNet(nn.Module):
         self.device = device
         channel_list = [self.in_channels] + list(self.channels)
         out_c_list = [self.out_channels] + list(self.channels)
+
 
 
         if self.args.depth == 1:
@@ -223,7 +225,10 @@ class Mirror_UNet(nn.Module):
                     self.common_ups.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
 
                 else:
-                    self.up_1.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
+                    if self.args.dataset != 'BraTS':
+                        self.up_1.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
+                    else:
+                        self.up_1.append(self._get_up_layer(up_in, 2, 2, is_top).to(device))
                     #if self.args.task == 'fission':
                     #    self.up_2.append(self._get_up_layer(up_in, 1, 2, is_top).to(device))
 
@@ -249,7 +254,9 @@ class Mirror_UNet(nn.Module):
         if self.task in ['fission', 'fission_classification']:
             dec_channels = out_c_list[:-2]
             for i, c in enumerate(dec_channels[::-1]):
-                c_out = 1 if c == 2 else c
+                c_out = 1 if (c == 2 and self.args.dataset != 'BraTS') else c
+
+
 
 
                 if i == 0:
@@ -380,14 +387,8 @@ class Mirror_UNet(nn.Module):
 
         return conv
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # assume one channel for each modality
-
-        common_bottom = not (self.args.depth == 1 and self.args.level != 3)
-
-
-        x_1 = x[:,0].unsqueeze(dim=1) # CT
-
+    # CT Branch
+    def forward_1(self, x_1: torch.Tensor, common_bottom) -> torch.Tensor:
         down_x_1 = []
         for i, d in enumerate(self.down_1):
             if i == self.common_down_indices[0]:
@@ -403,17 +404,13 @@ class Mirror_UNet(nn.Module):
                 x_1 = d(x_1)
                 down_x_1.append(x_1)
 
-
         if not common_bottom:
             bottom_x_1 = self.bottom_layer_1(x_1)
         else:
 
             bottom_x_1 = self.bottom_layer(x_1)
 
-
         x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
-
-
 
         up_x_1 = []
         passed_common = False
@@ -433,9 +430,10 @@ class Mirror_UNet(nn.Module):
                     break
                 x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
         x_1 = self.up_1[0](x_1)
+        return x_1, bottom_x_1
 
-
-        x_2 = x[:,1].unsqueeze(dim=1) # PET
+    # PET Branch
+    def forward_2(self, x_2: torch.Tensor, common_bottom) -> torch.Tensor:
 
         down_x_2 = []
         for i, d in enumerate(self.down_2):
@@ -451,19 +449,11 @@ class Mirror_UNet(nn.Module):
             for d in self.common_downs:
                 x_2 = d(x_2)
                 down_x_2.append(x_2)
-
-
         if not common_bottom:
             bottom_x_2 = self.bottom_layer_2(x_2)
         else:
-
             bottom_x_2 = self.bottom_layer(x_2)
-
-
-
         x_2 = torch.cat([bottom_x_2, down_x_2[-1]], dim=1)
-
-
 
         passed_common = False
         for i, up in enumerate(self.up_2[::-1]):
@@ -482,6 +472,29 @@ class Mirror_UNet(nn.Module):
                 x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
 
         x_2 = self.up_2[0](x_2)
+        return x_2, bottom_x_2
+
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+
+        # assume one channel for each modality
+
+        common_bottom = not (self.args.depth == 1 and self.args.level != 3)
+
+        if self.args.task == 'alt_transference':
+            modality_index = torch.mean(x[:,0])
+            modality = 'ct' if modality_index == 0 else 'pet'
+            self.modality = modality
+
+        x_1 = x[:,0].unsqueeze(dim=1) # CT (or FLAIR)
+        if not (self.task == 'alt_transference' and modality == 'pet'):
+            x_1, bottom_x_1 = self.forward_1(x_1, common_bottom)
+
+
+        x_2 = x[:,1].unsqueeze(dim=1) # PET (or T2w)
+        if not (self.task == 'alt_transference' and modality == 'ct'):
+            x_2, bottom_x_2 = self.forward_2(x_2, common_bottom)
+
 
         x_3 = None
         if self.args.task in ['fission', 'fission_classification']:
@@ -509,6 +522,9 @@ class Mirror_UNet(nn.Module):
             else:
                 return x_1, x_3, x_2 # CT, PET, SEG
 
+        if self.args.dataset == 'BraTS' and self.args.task == 'fission' :
+            return torch.cat([x_1, x_3, x_2], dim=1) # (Core, Whole, Edema)
+
 
         if self.task == 'segmentation':
             if self.args.learnable_th:
@@ -530,6 +546,11 @@ class Mirror_UNet(nn.Module):
             x_1234 = torch.cat((x_1, x_3, x_2, x_4), dim=1)
 
             return x_1234
+        elif self.task == 'alt_transference':
+            if self.modality == 'ct':
+                return x_1
+            else:
+                return x_2
         else:
             raise ValueError(f"Task {self.task} is not supported!")
 
