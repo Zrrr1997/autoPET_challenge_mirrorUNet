@@ -1,4 +1,5 @@
 import argparse
+import json
 
 def prepare_parser(parser):
     # Hyperparameters
@@ -38,6 +39,8 @@ def prepare_parser(parser):
                          help='Use sliding window inference.')
     parser.add_argument('--save_nifti', default=False, action='store_true',
                          help='Save nifti files of the output and ground truth.')
+    parser.add_argument('--args_file', type=str, default=None,
+                         help='Arugments text file with default argparse arguments.')
 
     # Dataset
     parser.add_argument('--with_negatives', default=False, action='store_true',
@@ -50,8 +53,10 @@ def prepare_parser(parser):
                          help='Only evaluate without training.')
     parser.add_argument('--no_cache', default=False, action='store_true',
                          help='Toggle using PersistentDataset for cache.')
-    parser.add_argument('--in_dir', type=str, default='/home/anthropomatik/zk6393/zk6393-zrrr_ws/zk6393-test_zrrr/autoPET/FDG-PET-CT-Lesions/',
+    parser.add_argument('--in_dir', type=str, default='../autoPET/FDG-PET-CT-Lesions/',
                          help='Dataset root directory.')
+    parser.add_argument('--cache_dir', type=str, default='cache/test',
+                         help='Dataset cache directory.')
 
     # Classification
     parser.add_argument('--proj_dim', type=str, default=None,

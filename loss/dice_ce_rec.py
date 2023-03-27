@@ -149,8 +149,7 @@ class DiceCE_Rec_Loss(_Loss):
             input = input_ct_pet[:,2:] # Take only SEG_pred data from lightweight decoder
 
             target = target_ct_seg[:,2:]# Take only SEG_gt data
-            #print(target_ct_seg.shape)
-            #exit()
+
             input_rec = input_ct_pet[:,:2].unsqueeze(1)
             target_rec = target_ct_seg[:,:2].unsqueeze(1)
 

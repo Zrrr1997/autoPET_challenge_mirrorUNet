@@ -132,17 +132,17 @@ class DiceCE_Rec_Class_Loss(_Loss):
 
 
 
-        input = input_ct_pet_class[:,1:2] # Take only PET data
-        target = target_ct_seg_class[:,1:2]# Take only PET data
+        input = input_ct_pet_class[:,2:4] # Take only SEG data
+        target = target_ct_seg_class[:,2:3]# Take only SEG data
 
 
-        # TODO - debug this
-        input_class = torch.stack([torch.mean(el) for el in input_ct_pet_class[:,2:]]) # Take only PET data
-        target_class = torch.stack([torch.mean(el) for el in target_ct_seg_class[:,2:]]) # Take only PET data
+        input_class = input_ct_pet_class[:, 4:]
+        input_class = torch.stack([torch.mean(el) for el in input_class])
+        target_class = target_ct_seg_class[:, 3:]
+        target_class = torch.stack([torch.mean(el) for el in target_class])
 
-
-        input_rec = input_ct_pet_class[:,0].unsqueeze(1) # Take only
-        target_rec = target_ct_seg_class[:,0].unsqueeze(1) # Take only CT gt
+        input_rec = input_ct_pet_class[:,:2].unsqueeze(1) # Take only PET/CT volumes
+        target_rec = target_ct_seg_class[:,:2].unsqueeze(1) # Take only PET/CT volumes
 
 
         if len(input.shape) != len(target.shape):
@@ -156,6 +156,5 @@ class DiceCE_Rec_Class_Loss(_Loss):
 
 
         total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_dice * ce_loss + self.lambda_rec * rec_loss + self.lambda_class * class_loss
-        print('Total loss', total_loss)
 
         return total_loss

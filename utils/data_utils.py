@@ -241,6 +241,7 @@ def prepare_loaders(in_dir=None, pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct
                 if args.dataset == 'ACRIN':
                     task_cache_dir = os.path.join(task_cache_dir, args.dataset)
 
+                task_cache_dir = task_cache_dir if args.cache_dir is None else args.cache_dir
                 print(f"Using cache directory: {task_cache_dir}")
                 train_ds = PersistentDataset(data=train_files, transform=train_transforms, cache_dir=os.path.join(task_cache_dir, 'train'))
                 if args.debug:

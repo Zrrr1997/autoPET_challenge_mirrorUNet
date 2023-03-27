@@ -49,6 +49,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Mirror U-Net for AutoPET: codebase implementation.')
     parser = prepare_parser(parser)
     args = parser.parse_args()
+    if args.args_file is not None:
+        tmp_cache = args.cache_dir
+        with open(args.args_file, 'r') as f:
+            json_dict = json.load(f)
+            argparse_dict = vars(args)
+            argparse_dict.update(json_dict)
+        args.cache_dir = tmp_cache # Do not overwrite this...
+
+
     print('--------\n')
     print(args, '\n')
     print('--------')
@@ -127,16 +136,16 @@ if __name__ == "__main__":
 
         # BraTS ablation
         if args.dataset == 'BraTS':
-            inp = torch.cat([inp[:,2:3], inp[:,:1]], dim=1) # FLAIR + T2w
+            inp = torch.cat([inp[:,3:], inp[:,:1]], dim=1) # T2w + FLAIR
+            print('Input', inp.shape)
             label = batch["label"]
             core = label[:, 2:]
             edema =  label[:,:1]
-            whole = core + edema
+            whole = label[:,1:2]
 
             core = (core > 0) * 1.0
             edema = (edema > 0) * 1.0
             whole = (whole > 0) * 1.0
-            edema = whole - core
 
             seg = torch.cat([core, whole, edema], dim=1) # Core, Edema
 
