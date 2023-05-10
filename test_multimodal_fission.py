@@ -74,6 +74,8 @@ if __name__ == "__main__":
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
 
+    print('Number of model parameters:', f'{get_n_params(net):,}')
+
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128] # Fix axial resolution for non-sliding window inference
     train_loader, val_loader = prepare_loaders(in_dir=args.in_dir, spatial_size=spatial_size, args=args)
@@ -98,7 +100,12 @@ if __name__ == "__main__":
     loss = prepare_loss(args)
     lr = args.lr
 
-    opt = torch.optim.Adam(net.parameters(), lr, weight_decay=1e-5)
+    if args.blackbean:
+        opt = torch.optim.SGD(net.parameters(), 0.0001, weight_decay=0.001) # Blackbean
+    else:
+        opt = torch.optim.Adam(net.parameters(), lr, weight_decay=1e-5)
+
+
 
     # Noise or Voxel Shuffling
     if args.self_supervision != 'L2':
@@ -259,9 +266,13 @@ if __name__ == "__main__":
     train_tensorboard_stats_handler = TensorBoardStatsHandler(output_transform=lambda x: x, log_dir=args.log_dir,)
     train_tensorboard_stats_handler.attach(trainer)
 
-    # Learning rate drop-off at every args.lr_step_size epochs
-    train_lr_handler = LrScheduleHandler(lr_scheduler=torch.optim.lr_scheduler.StepLR(opt, step_size=args.lr_step_size, gamma=0.1), print_lr=True)
-    train_lr_handler.attach(trainer)
+    if args.blackbean:
+        train_lr_handler = LrScheduleHandler(lr_scheduler=torch.optim.lr_scheduler.PolynomialLR(opt, total_iters=250000, power=0.9, last_epoch=-1, verbose=True), print_lr=True, epoch_level=False)
+
+    else:
+        # Learning rate drop-off at every args.lr_step_size epochs
+        train_lr_handler = LrScheduleHandler(lr_scheduler=torch.optim.lr_scheduler.StepLR(opt, step_size=args.lr_step_size, gamma=0.1), print_lr=True)
+        train_lr_handler.attach(trainer)
 
     # Validation configuration
     validation_every_n_iters = args.eval_every

@@ -168,9 +168,9 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
             label = (label > 0) * 1.0
 
             if args.sliding_window:
-                roi_size = (96, 96, 96)
+                roi_size = (192, 192, 192) if args.blackbean else (96, 96, 96)
                 sw_batch_size = 4
-                out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False)
+                out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False, overlap=0.3)
             else:
                 out = net(inp)
 

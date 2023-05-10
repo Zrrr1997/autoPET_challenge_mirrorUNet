@@ -272,6 +272,15 @@ def generate_pngs(data_dir):
             img_png_fn = os.path.join(data_dir, f'pngs/mip_{axis}', img_fn.split('/')[-1].replace('npy', 'png'))
             cv2.imwrite(img_png_fn, img_png)
 
+def get_n_params(model):
+    pp=0
+    for p in list(model.parameters()):
+        nn=1
+        for s in list(p.size()):
+            nn = nn*s
+        pp += nn
+    return pp
+
 def save_network_graph_plot(net, data, args):
     yhat = net(data)
     make_dot(yhat, params=dict(list(net.named_parameters()))).render(f"mirrorUNet_graph_level_{args.level}_depth_{args.depth}", format="png")

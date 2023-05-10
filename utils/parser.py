@@ -86,6 +86,8 @@ def prepare_parser(parser):
                              help='Keyword to search for in the weights file.')
     parser.add_argument('--brats_unet', default=False, action='store_true',
                          help='Use U-Net for the BraTS tumor segmentation.')
+    parser.add_argument('--blackbean', default=False, action='store_true',
+                         help='Use U-Net for the Blackbean segmentation model')
     ## Tasks
     parser.add_argument('--task', type=str, default='segmentation',
                          help='Training task for the model: [segmentation, reconstruction, classification, transference, fission, fission_classification, alt_transference]')
