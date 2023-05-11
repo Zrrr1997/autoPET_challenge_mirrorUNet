@@ -39,6 +39,7 @@ def con_comp(seg_array):
 
 # Ignite expects a (input, label) tuple
 def prepare_batch(batch, device=None, input_mod=None, non_blocking=False, task=None, args=None):
+
     if not args.mask_attention:
         inp = batch[input_mod]
     else:
@@ -107,7 +108,6 @@ def prepare_batch(batch, device=None, input_mod=None, non_blocking=False, task=N
         elif args.self_supervision == 'L2_mask':
 
             ct_vol_masked = ct_vol.clone().detach()
-
 
             if args.task == 'transference':
                 return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
@@ -345,19 +345,13 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
                 mask_out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False)
             else:
                 mask_out = net(inp)
-
             if args.save_nifti:
                 save_nifti(inp, device, mask_out, args, post_pred, post_label, label)
-
-            mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
-            label = torch.stack([post_label(i) for i in decollate_batch(label)])
-
-
             recon_out = mask_out[:, :2]
-            rec_loss.append(torch.nanmean(torch.abs(inp[:, :2] - recon_out)).cpu().detach().numpy())
+
             if args.task == 'fission_classification':
                 cls_out = mask_out[:, 4:]
-                cls_out = torch.stack([torch.nanmean(el) for el in cls_out]).cpu().detach().numpy() # Does not evaluate sliding_window properly
+                cls_out = torch.stack([torch.nanmean(el) for el in cls_out]).cpu().detach().numpy() # Fixed 0-classification acc
 
                 cls_gt = label[:, 3:]
                 cls_gt = torch.stack([torch.nanmean(el) for el in cls_gt]).cpu().detach().numpy()
@@ -365,6 +359,10 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
                     class_pred.append((el > 0.5) * 1.0)
                     class_label.append(cls_gt[j])
 
+            rec_loss.append(torch.nanmean(torch.abs(inp[:, :2] - recon_out)).cpu().detach().numpy())
+
+            mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
+            label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
             dice = compute_meandice(mask_out, label, include_background=True)
             dice_F1 = compute_meandice(mask_out, label, include_background=False)
@@ -388,6 +386,7 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
 
     net.train()
     return dice_F1, dice_bg
+
 
 def reconstruction(args, val_loader, net, evaluator, post_pred, post_label, device, input_mod=None, writer=None, trainer=None):
     if not args.sliding_window and not args.save_nifti:

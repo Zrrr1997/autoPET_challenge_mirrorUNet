@@ -20,7 +20,6 @@ from monai.transforms import(
     RandRotated,
     RandFlipd,
     EnsureTyped,
-    Compose,
     MapTransform,
     CenterSpatialCropd,
     Transform,
@@ -31,14 +30,17 @@ from monai.transforms import(
     ToDeviced,
     SaveImaged,
     ShiftIntensity,
+    InvertibleTransform,
+    apply_transform,
 )
 from monai.utils.enums import PostFix
+from monai.utils import MAX_SEED, ensure_tuple, get_seed
+from monai.utils.enums import TraceKeys
 from monai.config import DtypeLike, KeysCollection
-from typing import Callable, Dict, Hashable, Mapping, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Hashable, Mapping, Optional, Sequence, Tuple, Union, Any
 from monai.config.type_definitions import NdarrayOrTensor
 
 DEFAULT_POST_FIX = PostFix.meta()
-
 
 import numpy as np
 import torch
@@ -159,7 +161,7 @@ def prepare_transforms(pixdim=(2.036, 2.036, 3.0), a_min_ct=-100, a_max_ct=250, 
             [
                 LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
                 AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
-                Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=pixdim, mode=("bilinear", "bilinear", "nearest")),
+                #Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=pixdim, mode=("bilinear", "bilinear", "nearest")),
                 Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
 
                 NormalizeIntensityd(keys=['pet_vol'], nonzero=True),
@@ -173,7 +175,7 @@ def prepare_transforms(pixdim=(2.036, 2.036, 3.0), a_min_ct=-100, a_max_ct=250, 
                 RandFlipd(keys=["ct_vol", "pet_vol", "seg"], prob=0.5, spatial_axis=0),
                 RandFlipd(keys=["ct_vol", "pet_vol", "seg"], prob=0.5, spatial_axis=1),
                 RandFlipd(keys=["ct_vol", "pet_vol", "seg"], prob=0.5, spatial_axis=2),
-                RandRotated(keys=["ct_vol", "pet_vol", "seg"], prob=0.16, range_x=np.pi / 12.0, range_y=np.pi / 12.0, range_z=np.pi / 12.0),
+                #RandRotated(keys=["ct_vol", "pet_vol", "seg"], prob=0.16, range_x=np.pi / 12.0, range_y=np.pi / 12.0, range_z=np.pi / 12.0),
 
                 ConcatItemsd(keys=["ct_vol", "pet_vol"], name="ct_pet_vol", dim=0),  # concatenate pet and ct channels
                 EnsureTyped(keys=["ct_pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}")),#, track_meta=False),
@@ -186,7 +188,7 @@ def prepare_transforms(pixdim=(2.036, 2.036, 3.0), a_min_ct=-100, a_max_ct=250, 
             [
                 LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
                 AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
-                Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=pixdim, mode=("bilinear", "bilinear", "nearest")),
+                #Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=pixdim, mode=("bilinear", "bilinear", "nearest")),
                 Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
                 NormalizeIntensityd(keys=['pet_vol'], nonzero=True),
                 ScaleIntensityRangePercentilesd(keys=['ct_vol'], lower=0.5,upper=99.5, b_min=0.0, b_max=1.0, clip=True),
@@ -696,3 +698,84 @@ class RandShiftIntensityGaussiand(RandomizableTransform, MapTransform):
             ):
                 d[key] = self.shifter(d[key])
             return d
+
+class Compose(Randomizable, InvertibleTransform):
+
+    def __init__(
+        self,
+        transforms: Optional[Union[Sequence[Callable], Callable]] = None,
+        map_items: bool = True,
+        unpack_items: bool = False,
+        log_stats: bool = False,
+    ) -> None:
+        if transforms is None:
+            transforms = []
+        self.transforms = ensure_tuple(transforms)
+        self.map_items = map_items
+        self.unpack_items = unpack_items
+        self.log_stats = log_stats
+        self.set_random_state(seed=get_seed())
+
+    def set_random_state(self, seed: Optional[int] = None, state: Optional[np.random.RandomState] = None) -> "Compose":
+        super().set_random_state(seed=seed, state=state)
+        for _transform in self.transforms:
+            if not isinstance(_transform, Randomizable):
+                continue
+            _transform.set_random_state(seed=self.R.randint(MAX_SEED, dtype="uint32"))
+        return self
+
+
+    def randomize(self, data: Optional[Any] = None) -> None:
+        for _transform in self.transforms:
+            if not isinstance(_transform, Randomizable):
+                continue
+            try:
+                _transform.randomize(data)
+            except TypeError as type_error:
+                tfm_name: str = type(_transform).__name__
+                warnings.warn(
+                    f'Transform "{tfm_name}" in Compose not randomized\n{tfm_name}.{type_error}.', RuntimeWarning
+                )
+
+
+    def flatten(self):
+        """Return a Composition with a simple list of transforms, as opposed to any nested Compositions.
+
+        e.g., `t1 = Compose([x, x, x, x, Compose([Compose([x, x]), x, x])]).flatten()`
+        will result in the equivalent of `t1 = Compose([x, x, x, x, x, x, x, x])`.
+
+        """
+        new_transforms = []
+        for t in self.transforms:
+            if type(t) is Compose:  # nopep8
+                new_transforms += t.flatten().transforms
+            else:
+                new_transforms.append(t)
+
+        return Compose(new_transforms)
+
+
+    def __len__(self):
+        """Return number of transformations."""
+        return len(self.flatten().transforms)
+
+    def __call__(self, input_):
+        import time
+        a = time.time()
+        for _transform in self.transforms:
+            s = time.time()
+            input_ = apply_transform(_transform, input_, self.map_items, self.unpack_items, self.log_stats)
+            #print(f"transform {_transform.__class__.__name__}", time.time() - s)
+        #print("total time", time.time() - a)
+        return input_
+
+
+    def inverse(self, data):
+        invertible_transforms = [t for t in self.flatten().transforms if isinstance(t, InvertibleTransform)]
+        if not invertible_transforms:
+            warnings.warn("inverse has been called but no invertible transforms have been supplied")
+
+        # loop backwards over transforms
+        for t in reversed(invertible_transforms):
+            data = apply_transform(t.inverse, data, self.map_items, self.unpack_items, self.log_stats)
+        return data

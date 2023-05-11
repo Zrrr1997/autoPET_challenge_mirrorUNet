@@ -74,7 +74,6 @@ if __name__ == "__main__":
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
 
-
     print('Number of model parameters:', f'{get_n_params(net):,}')
 
     # Data configurations
@@ -101,9 +100,8 @@ if __name__ == "__main__":
     loss = prepare_loss(args)
     lr = args.lr
 
-    opt = torch.optim.Adam(net.parameters(), lr, weight_decay=0)
     if args.blackbean:
-        opt = torch.optim.SGD(net.parameters(), 0.0001, weight_decay=0.001) # Blackbean
+        opt = torch.optim.SGD(net.parameters(), 0.0001, weight_decay=0.001, momentum=0.99) # Blackbean
     else:
         opt = torch.optim.Adam(net.parameters(), lr, weight_decay=1e-5)
 
@@ -253,13 +251,12 @@ if __name__ == "__main__":
         args.ckpt_dir, "net", n_saved=20, require_empty=False
     )
 
+
     trainer.add_event_handler(
         event_name=Events.EPOCH_COMPLETED(every=args.save_every),
         handler=checkpoint_handler,
         to_save={"net": net, "opt": opt},
     )
-
-
 
     # Logging
     train_stats_handler = StatsHandler(name="trainer", output_transform=lambda x: x)
@@ -271,7 +268,7 @@ if __name__ == "__main__":
 
     if args.blackbean:
         train_lr_handler = LrScheduleHandler(lr_scheduler=torch.optim.lr_scheduler.PolynomialLR(opt, total_iters=250000, power=0.9, last_epoch=-1, verbose=True), print_lr=True, epoch_level=False)
-
+        train_lr_handler.attach(trainer)
     else:
         # Learning rate drop-off at every args.lr_step_size epochs
         train_lr_handler = LrScheduleHandler(lr_scheduler=torch.optim.lr_scheduler.StepLR(opt, step_size=args.lr_step_size, gamma=0.1), print_lr=True)

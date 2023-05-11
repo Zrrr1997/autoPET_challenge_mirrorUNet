@@ -407,6 +407,7 @@ class Mirror_UNet(nn.Module):
         if not common_bottom:
             bottom_x_1 = self.bottom_layer_1(x_1)
         else:
+
             bottom_x_1 = self.bottom_layer(x_1)
 
         x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
@@ -433,12 +434,14 @@ class Mirror_UNet(nn.Module):
 
     # PET Branch
     def forward_2(self, x_2: torch.Tensor, common_bottom) -> torch.Tensor:
+
         down_x_2 = []
         for i, d in enumerate(self.down_2):
             if i == self.common_down_indices[0]:
                 for c_d in self.common_downs:
                     x_2 = c_d(x_2)
                     down_x_2.append(x_2)
+
             x_2 = d(x_2)
             down_x_2.append(x_2)
 
@@ -465,8 +468,9 @@ class Mirror_UNet(nn.Module):
             else:
                 if len(down_x_2) < abs(-i - 2):
                     break
+
                 x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
-        self.up_2[0]
+
         x_2 = self.up_2[0](x_2)
         return x_2, bottom_x_2
 
@@ -474,6 +478,7 @@ class Mirror_UNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
         # assume one channel for each modality
+
         common_bottom = not (self.args.depth == 1 and self.args.level != 3)
 
         if self.args.task == 'alt_transference':
