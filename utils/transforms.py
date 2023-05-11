@@ -7,6 +7,7 @@ from monai.transforms import(
     Orientationd,
     ScaleIntensityd,
     ScaleIntensityRanged,
+    ScaleIntensityRangePercentilesd,
     EnsureChannelFirstd,
     RandSpatialCropd,
     NormalizeIntensityd,
@@ -21,8 +22,23 @@ from monai.transforms import(
     EnsureTyped,
     Compose,
     MapTransform,
-    CenterSpatialCropd
+    CenterSpatialCropd,
+    Transform,
+    Randomizable,
+    RandomizableTransform,
+    MapTransform,
+    RandAdjustContrastd,
+    ToDeviced,
+    SaveImaged,
+    ShiftIntensity,
 )
+from monai.utils.enums import PostFix
+from monai.config import DtypeLike, KeysCollection
+from typing import Callable, Dict, Hashable, Mapping, Optional, Sequence, Tuple, Union
+from monai.config.type_definitions import NdarrayOrTensor
+
+DEFAULT_POST_FIX = PostFix.meta()
+
 
 import numpy as np
 import torch
@@ -52,7 +68,7 @@ class ConvertToMultiChannelBasedOnBratsClassesd(MapTransform):
             d[key] = torch.stack(result, axis=0).float()
         return d
 
-def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_min_pet=0, a_max_pet=15, spatial_size=[400, 400, 128], args=None):
+def prepare_transforms(pixdim=(2.036, 2.036, 3.0), a_min_ct=-100, a_max_ct=250, a_min_pet=0, a_max_pet=15, spatial_size=[400, 400, 128], args=None):
     ################
     ### TRAINING ###
     ################
@@ -138,7 +154,48 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
                 ]
             )
             return train_transforms, val_transforms
+    if args.blackbean:
+        train_transforms = Compose(
+            [
+                LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
+                AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
+                Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=pixdim, mode=("bilinear", "bilinear", "nearest")),
+                Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
 
+                NormalizeIntensityd(keys=['pet_vol'], nonzero=True),
+                ScaleIntensityRangePercentilesd(keys=['ct_vol'], lower=0.5,upper=99.5, b_min=0.0, b_max=1.0, clip=True),
+
+                RandScaleIntensityd(keys=["ct_vol"], factors=0.25, prob=1.0),
+                RandScaleIntensityd(keys=["pet_vol"], factors=0.25, prob=1.0),
+                RandShiftIntensityGaussiand(keys=["ct_vol"]),
+                RandShiftIntensityGaussiand(keys=["pet_vol"]),
+                RandAdjustContrastd(keys=["ct_vol", "pet_vol"], prob=0.3, gamma=(1.0 / 1.5 , 1.0 / 0.7)),
+                RandFlipd(keys=["ct_vol", "pet_vol", "seg"], prob=0.5, spatial_axis=0),
+                RandFlipd(keys=["ct_vol", "pet_vol", "seg"], prob=0.5, spatial_axis=1),
+                RandFlipd(keys=["ct_vol", "pet_vol", "seg"], prob=0.5, spatial_axis=2),
+                RandRotated(keys=["ct_vol", "pet_vol", "seg"], prob=0.16, range_x=np.pi / 12.0, range_y=np.pi / 12.0, range_z=np.pi / 12.0),
+
+                ConcatItemsd(keys=["ct_vol", "pet_vol"], name="ct_pet_vol", dim=0),  # concatenate pet and ct channels
+                EnsureTyped(keys=["ct_pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}")),#, track_meta=False),
+
+                RandCropByPosNegLabeld(keys=["ct_pet_vol", "seg"], label_key="seg", spatial_size=[192, 192, 192], pos=1.0/2.0, neg=1.0/2.0, num_samples=1, allow_smaller=True),
+                ToTensord(keys=["seg", "ct_pet_vol", "class_label"]),
+            ]
+        )
+        val_transforms = Compose(
+            [
+                LoadImaged(keys=["ct_vol", "pet_vol", "seg"]),
+                AddChanneld(keys=["ct_vol", "pet_vol", "seg"]),
+                Spacingd(keys=["ct_vol", "pet_vol", "seg"], pixdim=pixdim, mode=("bilinear", "bilinear", "nearest")),
+                Orientationd(keys=["ct_vol", "pet_vol", "seg"], axcodes="LAS"),
+                NormalizeIntensityd(keys=['pet_vol'], nonzero=True),
+                ScaleIntensityRangePercentilesd(keys=['ct_vol'], lower=0.5,upper=99.5, b_min=0.0, b_max=1.0, clip=True),
+                ConcatItemsd(keys=["ct_vol", "pet_vol"], name="ct_pet_vol", dim=0),  # concatenate pet and ct channels
+                EnsureTyped(keys=["ct_pet_vol", "seg"], device=torch.device(f"cuda:{args.gpu}"), track_meta=False),
+                ToTensord(keys=["seg", "ct_pet_vol", "class_label"]),
+            ]
+        )
+        return train_transforms, val_transforms
     # Just generate MIP
     if args.generate_mip:
         train_transforms = Compose(
@@ -578,3 +635,64 @@ def prepare_transforms(pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct=250, a_mi
         exit()
 
     return train_transforms, val_transforms
+
+class RandShiftIntensityGaussian(Randomizable, Transform):
+    """Randomly shift intensity with randomly picked offset.
+    """
+
+    def __init__(self, prob=1.0):
+        self.prob = prob
+        self._do_transform = False
+
+    def randomize(self):
+        self._offset = self.R.normal(loc=0, scale=0.1) # offset ~ N(0, 0.1)
+        self._do_transform = self.R.random() < self.prob
+
+
+    def __call__(self, img):
+        self.randomize()
+        if not self._do_transform:
+            return img
+        shifter = ShiftIntensity(self._offset)
+        return shifter(img)
+
+class RandShiftIntensityGaussiand(RandomizableTransform, MapTransform):
+    backend = RandShiftIntensityGaussian.backend
+
+    def __init__(
+            self,
+            keys: KeysCollection,
+            meta_key_postfix: str = DEFAULT_POST_FIX,
+            prob: float = 1.0,
+            allow_missing_keys: bool = False,
+        ) -> None:
+
+            MapTransform.__init__(self, keys, allow_missing_keys)
+            RandomizableTransform.__init__(self, prob)
+
+            self.shifter = RandShiftIntensityGaussian(prob=1.0)
+
+
+    def set_random_state(
+            self, seed: Optional[int] = None, state: Optional[np.random.RandomState] = None
+        ) -> "RandShiftIntensityGaussiand":
+            super().set_random_state(seed, state)
+            self.shifter.set_random_state(seed, state)
+            return self
+
+
+    def __call__(self, data) -> Dict[Hashable, NdarrayOrTensor]:
+            d = dict(data)
+            self.randomize(None)
+            if not self._do_transform:
+                for key in self.key_iterator(d):
+                    d[key] = convert_to_tensor(d[key], track_meta=get_track_meta())
+                return d
+
+            # all the keys share the same random shift factor
+            self.shifter.randomize()
+            for key in self.key_iterator(
+                d
+            ):
+                d[key] = self.shifter(d[key])
+            return d

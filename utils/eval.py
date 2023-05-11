@@ -107,7 +107,10 @@ def prepare_batch(batch, device=None, input_mod=None, non_blocking=False, task=N
         elif args.self_supervision == 'L2_mask':
 
             ct_vol_masked = ct_vol.clone().detach()
+<<<<<<< HEAD
             #ct_vol_masked = rand_shuffle(ct_vol_masked)
+=======
+>>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
 
             if args.task == 'transference':
                 return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
@@ -169,9 +172,9 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
             label = (label > 0) * 1.0
 
             if args.sliding_window:
-                roi_size = (96, 96, 96)
+                roi_size = (192, 192, 192) if args.blackbean else (96, 96, 96)
                 sw_batch_size = 4
-                out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False)
+                out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False, overlap=0.3)
             else:
                 out = net(inp)
 
@@ -284,7 +287,10 @@ def braTS_eval(args, val_loader, net, evaluator, post_pred, post_label, device, 
 
 
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
             if args.save_nifti:
                 save_nifti_img(f'{args.log_dir}/brats_label', label_whole[0][1].cpu().detach().numpy())
                 save_nifti_img(f'{args.log_dir}/brats_label_edema', label_edema[0][1].cpu().detach().numpy())
@@ -315,7 +321,6 @@ def braTS_eval(args, val_loader, net, evaluator, post_pred, post_label, device, 
     dice_core = np.nanmean(np.array(dices_core))
     dice_edema = np.nanmean(np.array(dices_edema))
     print('Mean dice foreground:', dice_F1)
-    #print('Mean dice background:', dice_bg)
     print('Mean dice (tumor core)', dice_core)
     print('Mean dice (tumor edema)', dice_edema)
 
@@ -347,10 +352,16 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
                 mask_out = sliding_window_inference(inp, roi_size, sw_batch_size, net, progress=False)
             else:
                 mask_out = net(inp)
+
             if args.save_nifti:
                 save_nifti(inp, device, mask_out, args, post_pred, post_label, label)
-            recon_out = mask_out[:, :2]
 
+            mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
+            label = torch.stack([post_label(i) for i in decollate_batch(label)])
+
+
+            recon_out = mask_out[:, :2]
+            rec_loss.append(torch.nanmean(torch.abs(inp[:, :2] - recon_out)).cpu().detach().numpy())
             if args.task == 'fission_classification':
                 cls_out = mask_out[:, 4:]
                 cls_out = torch.stack([torch.nanmean(el) for el in cls_out]).cpu().detach().numpy() # Does not evaluate sliding_window properly
@@ -361,18 +372,24 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
                     class_pred.append((el > 0.5) * 1.0)
                     class_label.append(cls_gt[j])
 
+<<<<<<< HEAD
             rec_loss.append(torch.nanmean(torch.abs(inp[:, :2] - recon_out)).cpu().detach().numpy())
 
             mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
             label = torch.stack([post_label(i) for i in decollate_batch(label)])
 
+=======
+>>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
             dice = compute_meandice(mask_out, label, include_background=True)
             dice_F1 = compute_meandice(mask_out, label, include_background=False)
 
             dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
             dices_bg += list(dice.cpu().detach().numpy().flatten())
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
     dice_F1 = np.nanmean(np.array(dices_fg))
     dice_bg = np.nanmean(np.array(dices_bg))
     r_loss = np.nanmean(np.array(rec_loss))
@@ -502,7 +519,7 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
         if args.task not in ['transference', 'fission', 'fission_classification']:
             out_ct = torch.stack([post_pred(i) for i in decollate_batch(out_ct)])
 
-        if args.task not in ['fission',  'fission_classification']:
+        if args.task not in ['fission', 'fission_classification']:
             out_pet = torch.stack([post_pred(i) for i in decollate_batch(out_pet)])
         else:
             out_seg = torch.stack([post_pred(i) for i in decollate_batch(out_seg)])
@@ -525,6 +542,7 @@ def save_nifti(inp, device, out, args, post_pred, post_label, label):
             out_pet = nnf.interpolate(add_channel(add_channel(out_pet[0, 0])), size=spatial_size)[0][0]
             out_pet *= ((inp_pet > 0) *1.0)
             out_seg = convert_output(out_seg, device, spatial_size, add_channel)
+
 
         out_label = convert_output(label, device, spatial_size, add_channel)
 

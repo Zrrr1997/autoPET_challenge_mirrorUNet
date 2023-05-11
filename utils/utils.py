@@ -28,6 +28,7 @@ from torchinfo import summary
 from torchviz import make_dot
 
 
+
 def check_args(args):
     if args.sliding_window:
         assert args.batch_size == 1 # Sliding window can only work with batch_size 1
@@ -160,7 +161,7 @@ def fission_post_pred(x):
     #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
     if x.shape[0] > 2:
         return discrete(x[2:4,:])
-    else:
+    else: # For --save_nifti --separate_outputs
         return discrete(x)
 
 def brats_post_pred_train(x):
@@ -270,6 +271,15 @@ def generate_pngs(data_dir):
             img_png = np.expand_dims(img, axis=2) * 255
             img_png_fn = os.path.join(data_dir, f'pngs/mip_{axis}', img_fn.split('/')[-1].replace('npy', 'png'))
             cv2.imwrite(img_png_fn, img_png)
+
+def get_n_params(model):
+    pp=0
+    for p in list(model.parameters()):
+        nn=1
+        for s in list(p.size()):
+            nn = nn*s
+        pp += nn
+    return pp
 
 def save_network_graph_plot(net, data, args):
     yhat = net(data)

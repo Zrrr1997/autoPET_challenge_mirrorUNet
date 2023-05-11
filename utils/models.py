@@ -27,6 +27,16 @@ def prepare_model(device=None, out_channels=None, args=None, second=False):
             device=device
         ).to(device)
         print("Using BraTS UNet")
+    elif args.blackbean:
+        net = UNet(
+            spatial_dims=3,
+            in_channels=2,
+            out_channels=2, # softmax output (1 channel per class, i.e. Fg/Bg), 1 channel only for reconstruction (SSL pre-training)
+            channels=(32, 64, 128, 256, 512),
+            strides=(2, 2, 2, 2),
+            device=device
+        ).to(device)
+        print("Using Blackbean UNet")
     # Segmentation / Reconstruction
     elif (args.single_mod is not None or args.early_fusion) and args.task != 'classification' and args.class_backbone != 'Ensemble':
         in_channels = 2 if args.early_fusion and args.load_weights_second_model is None else 1

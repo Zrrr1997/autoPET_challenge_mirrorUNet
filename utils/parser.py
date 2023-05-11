@@ -1,4 +1,5 @@
 import argparse
+import json
 
 def prepare_parser(parser):
     # Hyperparameters
@@ -38,6 +39,8 @@ def prepare_parser(parser):
                          help='Use sliding window inference.')
     parser.add_argument('--save_nifti', default=False, action='store_true',
                          help='Save nifti files of the output and ground truth.')
+    parser.add_argument('--args_file', type=str, default=None,
+                         help='Arugments text file with default argparse arguments.')
 
     # Dataset
     parser.add_argument('--with_negatives', default=False, action='store_true',
@@ -83,6 +86,8 @@ def prepare_parser(parser):
                              help='Keyword to search for in the weights file.')
     parser.add_argument('--brats_unet', default=False, action='store_true',
                          help='Use U-Net for the BraTS tumor segmentation.')
+    parser.add_argument('--blackbean', default=False, action='store_true',
+                         help='Use U-Net for the Blackbean segmentation model')
     ## Tasks
     parser.add_argument('--task', type=str, default='segmentation',
                          help='Training task for the model: [segmentation, reconstruction, classification, transference, fission, fission_classification, alt_transference]')

@@ -49,6 +49,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Mirror U-Net for AutoPET: codebase implementation.')
     parser = prepare_parser(parser)
     args = parser.parse_args()
+    if args.args_file is not None:
+        tmp_cache = args.cache_dir
+        with open(args.args_file, 'r') as f:
+            json_dict = json.load(f)
+            argparse_dict = vars(args)
+            argparse_dict.update(json_dict)
+        args.cache_dir = tmp_cache # Do not overwrite this...
+
+
     print('--------\n')
     print(args, '\n')
     print('--------')
@@ -64,6 +73,12 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{args.gpu}") if args.gpu >= 0 else torch.device("cpu")
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
+<<<<<<< HEAD
+=======
+
+    print('Number of model parameters:', f'{get_n_params(net):,}')
+
+>>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128] # Fix axial resolution for non-sliding window inference
     train_loader, val_loader = prepare_loaders(in_dir=args.in_dir, spatial_size=spatial_size, args=args)
@@ -88,7 +103,16 @@ if __name__ == "__main__":
     loss = prepare_loss(args)
     lr = args.lr
 
+<<<<<<< HEAD
     opt = torch.optim.Adam(net.parameters(), lr, weight_decay=0)
+=======
+    if args.blackbean:
+        opt = torch.optim.SGD(net.parameters(), 0.0001, weight_decay=0.001) # Blackbean
+    else:
+        opt = torch.optim.Adam(net.parameters(), lr, weight_decay=1e-5)
+
+
+>>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
 
     # Noise or Voxel Shuffling
     if args.self_supervision != 'L2':
@@ -136,6 +160,7 @@ if __name__ == "__main__":
             core = (core > 0) * 1.0
             edema = (edema > 0) * 1.0
             whole = (whole > 0) * 1.0
+<<<<<<< HEAD
             #edema = whole - core
             '''
             save_nifti_img('core', core[0,0])
@@ -145,6 +170,9 @@ if __name__ == "__main__":
             save_nifti_img('FLAIR', inp[:,1:][0,0])
             exit()
             '''
+=======
+
+>>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
             seg = torch.cat([core, whole, edema], dim=1) # Core, Edema
 
             return _prepare_batch((inp, seg), device, non_blocking)
@@ -258,9 +286,13 @@ if __name__ == "__main__":
     train_tensorboard_stats_handler = TensorBoardStatsHandler(output_transform=lambda x: x, log_dir=args.log_dir,)
     train_tensorboard_stats_handler.attach(trainer)
 
-    # Learning rate drop-off at every args.lr_step_size epochs
-    train_lr_handler = LrScheduleHandler(lr_scheduler=torch.optim.lr_scheduler.StepLR(opt, step_size=args.lr_step_size, gamma=0.1), print_lr=True)
-    train_lr_handler.attach(trainer)
+    if args.blackbean:
+        train_lr_handler = LrScheduleHandler(lr_scheduler=torch.optim.lr_scheduler.PolynomialLR(opt, total_iters=250000, power=0.9, last_epoch=-1, verbose=True), print_lr=True, epoch_level=False)
+
+    else:
+        # Learning rate drop-off at every args.lr_step_size epochs
+        train_lr_handler = LrScheduleHandler(lr_scheduler=torch.optim.lr_scheduler.StepLR(opt, step_size=args.lr_step_size, gamma=0.1), print_lr=True)
+        train_lr_handler.attach(trainer)
 
     # Validation configuration
     validation_every_n_iters = args.eval_every

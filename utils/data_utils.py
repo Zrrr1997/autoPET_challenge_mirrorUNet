@@ -29,7 +29,7 @@ def read_fns(in_dir=None, args=None):
 
     if args.dataset == 'AutoPET':
         df_cv = pd.read_csv('data/autopet_5folds_augmented.csv')
-        df_cv['study_location'] = df_cv['study_location'].str.replace('/projects/datashare/tio/autopet/FDG-PET-CT-Lesions/', in_dir)
+        #df_cv['study_location'] = df_cv['study_location'].str.replace('/projects/datashare/tio/autopet/FDG-PET-CT-Lesions/', in_dir)
     else:
         df_cv = pd.read_csv('data/acrin_5folds_augmented.csv')
 
@@ -255,13 +255,13 @@ def prepare_loaders(in_dir=None, pixdim=(2.0, 2.0, 3.0), a_min_ct=-100, a_max_ct
     train_loader = ThreadDataLoader(train_ds,
                               batch_size=args.batch_size,
                               num_workers=0, # must be 0 to avoid "unexpected exception"
-                              collate_fn=list_data_collate
+                              collate_fn=list_data_collate,
                               )
     val_batch_size = 1 if args.sliding_window else args.batch_size
     val_loader = ThreadDataLoader(val_ds,
                               batch_size=val_batch_size,
                               num_workers=0,
-                              collate_fn=list_data_collate
+                              collate_fn=list_data_collate,
                               #pin_memory=torch.cuda.is_available() # removed due to EnsureTyped transform
                               )
 
