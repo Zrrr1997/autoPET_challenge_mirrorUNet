@@ -29,7 +29,7 @@ def read_fns(in_dir=None, args=None):
 
     if args.dataset == 'AutoPET':
         df_cv = pd.read_csv('data/autopet_5folds_augmented.csv')
-        #df_cv['study_location'] = df_cv['study_location'].str.replace('/projects/datashare/tio/autopet/FDG-PET-CT-Lesions/', in_dir)
+        df_cv['study_location'] = df_cv['study_location'].str.replace('/projects/datashare/tio/autopet/FDG-PET-CT-Lesions/', in_dir)
     else:
         df_cv = pd.read_csv('data/acrin_5folds_augmented.csv')
 

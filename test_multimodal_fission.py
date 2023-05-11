@@ -73,12 +73,10 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{args.gpu}") if args.gpu >= 0 else torch.device("cpu")
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
-<<<<<<< HEAD
-=======
+
 
     print('Number of model parameters:', f'{get_n_params(net):,}')
 
->>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128] # Fix axial resolution for non-sliding window inference
     train_loader, val_loader = prepare_loaders(in_dir=args.in_dir, spatial_size=spatial_size, args=args)
@@ -103,16 +101,13 @@ if __name__ == "__main__":
     loss = prepare_loss(args)
     lr = args.lr
 
-<<<<<<< HEAD
     opt = torch.optim.Adam(net.parameters(), lr, weight_decay=0)
-=======
     if args.blackbean:
         opt = torch.optim.SGD(net.parameters(), 0.0001, weight_decay=0.001) # Blackbean
     else:
         opt = torch.optim.Adam(net.parameters(), lr, weight_decay=1e-5)
 
 
->>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
 
     # Noise or Voxel Shuffling
     if args.self_supervision != 'L2':
@@ -160,19 +155,7 @@ if __name__ == "__main__":
             core = (core > 0) * 1.0
             edema = (edema > 0) * 1.0
             whole = (whole > 0) * 1.0
-<<<<<<< HEAD
-            #edema = whole - core
-            '''
-            save_nifti_img('core', core[0,0])
-            save_nifti_img('edema', edema[0,0])
-            save_nifti_img('whole', whole[0,0])
-            save_nifti_img('T2w', inp[:,:1][0,0])
-            save_nifti_img('FLAIR', inp[:,1:][0,0])
-            exit()
-            '''
-=======
 
->>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
             seg = torch.cat([core, whole, edema], dim=1) # Core, Edema
 
             return _prepare_batch((inp, seg), device, non_blocking)

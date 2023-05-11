@@ -107,10 +107,7 @@ def prepare_batch(batch, device=None, input_mod=None, non_blocking=False, task=N
         elif args.self_supervision == 'L2_mask':
 
             ct_vol_masked = ct_vol.clone().detach()
-<<<<<<< HEAD
-            #ct_vol_masked = rand_shuffle(ct_vol_masked)
-=======
->>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
+
 
             if args.task == 'transference':
                 return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
@@ -287,10 +284,6 @@ def braTS_eval(args, val_loader, net, evaluator, post_pred, post_label, device, 
 
 
 
-<<<<<<< HEAD
-
-=======
->>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
             if args.save_nifti:
                 save_nifti_img(f'{args.log_dir}/brats_label', label_whole[0][1].cpu().detach().numpy())
                 save_nifti_img(f'{args.log_dir}/brats_label_edema', label_edema[0][1].cpu().detach().numpy())
@@ -372,24 +365,14 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
                     class_pred.append((el > 0.5) * 1.0)
                     class_label.append(cls_gt[j])
 
-<<<<<<< HEAD
-            rec_loss.append(torch.nanmean(torch.abs(inp[:, :2] - recon_out)).cpu().detach().numpy())
 
-            mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
-            label = torch.stack([post_label(i) for i in decollate_batch(label)])
-
-=======
->>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
             dice = compute_meandice(mask_out, label, include_background=True)
             dice_F1 = compute_meandice(mask_out, label, include_background=False)
 
             dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
             dices_bg += list(dice.cpu().detach().numpy().flatten())
 
-<<<<<<< HEAD
 
-=======
->>>>>>> 4314b39f536fb885e738e1c3c00695a3b5b6854c
     dice_F1 = np.nanmean(np.array(dices_fg))
     dice_bg = np.nanmean(np.array(dices_bg))
     r_loss = np.nanmean(np.array(rec_loss))
