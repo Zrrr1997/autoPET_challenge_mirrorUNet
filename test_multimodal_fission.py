@@ -64,19 +64,6 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{args.gpu}") if args.gpu >= 0 else torch.device("cpu")
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
-    for param in net.parameters():
-        param.requires_grad = False
-    # War crimes
-    for name, param in net.named_parameters():
-        if name in ['fc.1.weight', 'fc.1.bias',
-'fc.4.weight', 'fc.4.bias']:
-            param.requires_grad = True
-            print(name)
-
-    for param in net.parameters():
-        print(param.requires_grad)
-
-
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128] # Fix axial resolution for non-sliding window inference
     train_loader, val_loader = prepare_loaders(in_dir=args.in_dir, spatial_size=spatial_size, args=args)
@@ -101,10 +88,8 @@ if __name__ == "__main__":
     loss = prepare_loss(args)
     lr = args.lr
 
-    # war crimes
-    #opt = torch.optim.Adam(net.parameters(), lr, weight_decay=0)
+    opt = torch.optim.Adam(net.parameters(), lr, weight_decay=0)
 
-    opt = torch.optim.SGD(net.parameters(), lr=lr, momentum=0, weight_decay=0)
     # Noise or Voxel Shuffling
     if args.self_supervision != 'L2':
         rand_noise = RandGaussianNoise(prob=1.0, std=0.3)
@@ -257,9 +242,8 @@ if __name__ == "__main__":
         args.ckpt_dir, "net", n_saved=20, require_empty=False
     )
 
-    # war crimes
     trainer.add_event_handler(
-        event_name=Events.ITERATION_COMPLETED(every=args.save_every),
+        event_name=Events.EPOCH_COMPLETED(every=args.save_every),
         handler=checkpoint_handler,
         to_save={"net": net, "opt": opt},
     )
