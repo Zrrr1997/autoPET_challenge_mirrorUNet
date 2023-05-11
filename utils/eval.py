@@ -45,19 +45,23 @@ def prepare_batch(batch, device=None, input_mod=None, non_blocking=False, task=N
         # Append the attention tensor to all volumes in the batch
         inp = torch.cat((torch.cat(batch[input_mod].shape[0] * [attention]), batch[input_mod]), dim=1) # dim=1 is the channel
     if args.dataset == 'BraTS':
-        inp = torch.cat([inp[:,2:3], inp[:,:1]], dim=1) # FLAIR + T2w
+        inp = torch.cat([inp[:,3:], inp[:,:1]], dim=1) # T2w + FLAIR
         label = batch["label"]
         core = label[:, 2:]
         edema =  label[:,:1]
-        whole = core + edema
+        whole = label[:,1:2]
 
         core = (core > 0) * 1.0
         edema = (edema > 0) * 1.0
         whole = (whole > 0) * 1.0
-        edema = whole - core
+        #edema = whole - core
 
         seg = torch.cat([core, whole, edema], dim=1) # Core, Edema
+
         return _prepare_batch((inp, seg), device, non_blocking)
+    if args.self_supervision != 'L2':
+        rand_noise = RandGaussianNoise(prob=1.0, std=0.3)
+        rand_shuffle = RandCoarseShuffle(prob=1.0, spatial_size=16, holes=args.n_masks)
     ### Segmentation ###
     if task == 'segmentation':
         return _prepare_batch((inp, batch["seg"]), device, non_blocking)
@@ -103,7 +107,7 @@ def prepare_batch(batch, device=None, input_mod=None, non_blocking=False, task=N
         elif args.self_supervision == 'L2_mask':
 
             ct_vol_masked = ct_vol.clone().detach()
-            ct_vol_masked = rand_shuffle(ct_vol_masked)
+            #ct_vol_masked = rand_shuffle(ct_vol_masked)
 
             if args.task == 'transference':
                 return _prepare_batch((torch.cat([ct_vol_masked, inp[:,1:]], dim=1), torch.cat([ct_vol, batch['seg']], dim=1)), device, non_blocking)
@@ -185,8 +189,8 @@ def segmentation(evaluator, val_loader, net, args, post_pred, post_label, device
                 dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
                 dices_bg += list(dice.cpu().detach().numpy().flatten())
 
-    f1_dice = np.mean(np.array(dices_fg))
-    bg_dice = np.mean(np.array(dices_bg))
+    f1_dice = np.nanmean(np.array(dices_fg))
+    bg_dice = np.nanmean(np.array(dices_bg))
     if args.learnable_th:
         print('Decision Threshold', net.learnable_th.cpu().detach().numpy())
         writer.add_scalar('Learnable Threshold', net.learnable_th.cpu().detach().numpy(), trainer.state.iteration)
@@ -220,7 +224,7 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
             if args.save_nifti:
                 save_nifti(inp, device, mask_out, args, post_pred, post_label, label)
             recon_out = mask_out[:, :1]
-            rec_loss.append(torch.mean(torch.abs(inp[:, :1] - recon_out)).cpu().detach().numpy())
+            rec_loss.append(torch.nanmean(torch.abs(inp[:, :1] - recon_out)).cpu().detach().numpy())
 
             mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
             label = torch.stack([post_label(i) for i in decollate_batch(label)])
@@ -232,9 +236,9 @@ def transference(args, val_loader, net, evaluator, post_pred, post_label, device
             dices_bg += list(dice.cpu().detach().numpy().flatten())
 
 
-    dice_F1 = np.mean(np.array(dices_fg))
-    dice_bg = np.mean(np.array(dices_bg))
-    r_loss = np.mean(np.array(rec_loss))
+    dice_F1 = np.nanmean(np.array(dices_fg))
+    dice_bg = np.nanmean(np.array(dices_bg))
+    r_loss = np.nanmean(np.array(rec_loss))
     print('Mean dice foreground:', dice_F1)
     print('Mean dice background:', dice_bg)
     print('Mean reconstruction loss:', r_loss)
@@ -273,7 +277,26 @@ def braTS_eval(args, val_loader, net, evaluator, post_pred, post_label, device, 
             label_edema = torch.stack([post_label_edema(i) for i in decollate_batch(label)])
 
             mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
-            label = torch.stack([post_label(i) for i in decollate_batch(label)])
+            mask_out = (mask_out > 0) * 1.0
+            label_whole = torch.stack([post_label(i) for i in decollate_batch(label)])
+            label_core = torch.stack([post_label_core(i) for i in decollate_batch(label)])
+            label_edema = torch.stack([post_label_edema(i) for i in decollate_batch(label)])
+
+
+
+
+            if args.save_nifti:
+                save_nifti_img(f'{args.log_dir}/brats_label', label_whole[0][1].cpu().detach().numpy())
+                save_nifti_img(f'{args.log_dir}/brats_label_edema', label_edema[0][1].cpu().detach().numpy())
+                save_nifti_img(f'{args.log_dir}/brats_label_core', label_core[0][1].cpu().detach().numpy())
+
+                save_nifti_img(f'{args.log_dir}/brats_core', mask_core[0][1].cpu().detach().numpy())
+                save_nifti_img(f'{args.log_dir}/brats_edema', mask_edema[0][1].cpu().detach().numpy())
+                save_nifti_img(f'{args.log_dir}/brats_whole', mask_out[0][1].cpu().detach().numpy())
+                save_nifti_img(f'{args.log_dir}/input', inp[0][0].cpu().detach().numpy())
+                save_nifti_img(f'{args.log_dir}/input_2', inp[0][1].cpu().detach().numpy())
+                exit()
+
 
             dice = compute_meandice(mask_out, label, include_background=True)
             dice_F1 = compute_meandice(mask_out, label, include_background=False)
@@ -286,17 +309,6 @@ def braTS_eval(args, val_loader, net, evaluator, post_pred, post_label, device, 
 
             dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
             dices_bg += list(dice.cpu().detach().numpy().flatten())
-
-
-            if args.save_nifti:
-                save_nifti_img('brats_label', label[0][1].cpu().detach().numpy())
-                save_nifti_img('brats_core', mask_core[0][1].cpu().detach().numpy())
-                save_nifti_img('brats_edema', mask_edema[0][1].cpu().detach().numpy())
-                save_nifti_img('brats_whole', mask_out[0][1].cpu().detach().numpy())
-                save_nifti_img('input', inp[0][0].cpu().detach().numpy())
-                save_nifti_img('input_2', inp[0][1].cpu().detach().numpy())
-                exit()
-
 
     dice_F1 = np.nanmean(np.array(dices_fg))
     dice_bg = np.nanmean(np.array(dices_bg))
@@ -341,15 +353,15 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
 
             if args.task == 'fission_classification':
                 cls_out = mask_out[:, 4:]
-                cls_out = torch.stack([torch.mean(el) for el in cls_out]).cpu().detach().numpy() # Does not evaluate sliding_window properly
+                cls_out = torch.stack([torch.nanmean(el) for el in cls_out]).cpu().detach().numpy() # Does not evaluate sliding_window properly
 
                 cls_gt = label[:, 3:]
-                cls_gt = torch.stack([torch.mean(el) for el in cls_gt]).cpu().detach().numpy()
+                cls_gt = torch.stack([torch.nanmean(el) for el in cls_gt]).cpu().detach().numpy()
                 for j, el in enumerate(cls_out):
                     class_pred.append((el > 0.5) * 1.0)
                     class_label.append(cls_gt[j])
 
-            rec_loss.append(torch.mean(torch.abs(inp[:, :2] - recon_out)).cpu().detach().numpy())
+            rec_loss.append(torch.nanmean(torch.abs(inp[:, :2] - recon_out)).cpu().detach().numpy())
 
             mask_out = torch.stack([post_pred(i) for i in decollate_batch(mask_out)])
             label = torch.stack([post_label(i) for i in decollate_batch(label)])
@@ -361,14 +373,16 @@ def fission(args, val_loader, net, evaluator, post_pred, post_label, device, inp
             dices_bg += list(dice.cpu().detach().numpy().flatten())
 
 
-    dice_F1 = np.mean(np.array(dices_fg))
-    dice_bg = np.mean(np.array(dices_bg))
-    r_loss = np.mean(np.array(rec_loss))
+    dice_F1 = np.nanmean(np.array(dices_fg))
+    dice_bg = np.nanmean(np.array(dices_bg))
+    r_loss = np.nanmean(np.array(rec_loss))
     acc = np.sum(np.array(class_pred) == np.array(class_label)) / len(class_pred)
     print('Mean dice foreground:', dice_F1)
     print('Mean dice background:', dice_bg)
     print('Mean reconstruction loss:', r_loss)
     print('Mean classification accuracy', acc)
+    writer.add_scalar('Dice F1:', dice_F1, trainer.state.iteration)
+    writer.add_scalar('Reconstruction Loss:', r_loss, trainer.state.iteration)
     writer.add_scalar('Reconstruction Loss:', r_loss, trainer.state.iteration)
     writer.add_scalar('Classification Accuracy:', acc, trainer.state.iteration)
 
@@ -392,12 +406,12 @@ def reconstruction(args, val_loader, net, evaluator, post_pred, post_label, devi
             else:
                 mask_out = net(inp)
             recon_out = mask_out
-            rec_loss.append(torch.mean(torch.abs(inp - recon_out)).cpu().detach().numpy())
+            rec_loss.append(torch.nanmean(torch.abs(inp - recon_out)).cpu().detach().numpy())
 
             if args.save_nifti:
                 save_nifti(inp, device, out, args, post_pred, post_label, label)
 
-    r_loss = np.mean(np.array(rec_loss))
+    r_loss = np.nanmean(np.array(rec_loss))
 
     print('Mean reconstruction loss:', r_loss)
     writer.add_scalar('Reconstruction Loss:', r_loss, trainer.state.iteration)
@@ -447,8 +461,8 @@ def segmentation_late_fusion(evaluator, val_loader, net, net_2, args, post_pred,
             dices_fg += list(dice_F1.cpu().detach().numpy().flatten())
             dices_bg += list(dice.cpu().detach().numpy().flatten())
 
-    f1_dice = np.mean(np.array(dices_fg))
-    bg_dice = np.mean(np.array(dices_bg))
+    f1_dice = np.nanmean(np.array(dices_fg))
+    bg_dice = np.nanmean(np.array(dices_bg))
     print('Mean dice foreground:', f1_dice)
     print('Mean dice background:', bg_dice)
     suffix = 'decision' if args.decision_fusion else 'logit'

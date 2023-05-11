@@ -132,30 +132,30 @@ class DiceCE_Rec_Class_Loss(_Loss):
 
 
 
-        input = input_ct_pet_class[:,1:2] # Take only PET data
-        target = target_ct_seg_class[:,1:2]# Take only PET data
+        #input = input_ct_pet_class[:,1:2] # Take only PET data
+        #target = target_ct_seg_class[:,1:2]# Take only PET data
 
 
-        # TODO - debug this
-        input_class = torch.stack([torch.mean(el) for el in input_ct_pet_class[:,2:]]) # Take only PET data
-        target_class = torch.stack([torch.mean(el) for el in target_ct_seg_class[:,2:]]) # Take only PET data
+
+        input_class = torch.stack([torch.mean(el) for el in input_ct_pet_class[:,4:]]) # Take only PET data
+        target_class = torch.stack([torch.mean(el) for el in target_ct_seg_class[:,3:]]) # Take only PET data
 
 
-        input_rec = input_ct_pet_class[:,0].unsqueeze(1) # Take only
-        target_rec = target_ct_seg_class[:,0].unsqueeze(1) # Take only CT gt
+        #input_rec = input_ct_pet_class[:,0].unsqueeze(1) # Take only
+        #target_rec = target_ct_seg_class[:,0].unsqueeze(1) # Take only CT gt
 
 
-        if len(input.shape) != len(target.shape):
-            raise ValueError("the number of dimensions for input and target should be the same.")
+        #if len(input.shape) != len(target.shape):
+        #    raise ValueError("the number of dimensions for input and target should be the same.")
 
-        dice_loss = self.dice(input, target)
-        ce_loss = self.ce(input, target)
+        #dice_loss = self.dice(input, target)
+        #ce_loss = self.ce(input, target)
         class_loss = self.ce_class(input_class, target_class)
 
-        rec_loss = self.rec_loss(input_rec, target_rec)
+        #rec_loss = self.rec_loss(input_rec, target_rec)
 
 
-        total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_dice * ce_loss + self.lambda_rec * rec_loss + self.lambda_class * class_loss
-        print('Total loss', total_loss)
 
+        total_loss = class_loss
+        #total_loss: torch.Tensor = self.lambda_dice * dice_loss + self.lambda_dice * ce_loss + self.lambda_rec * rec_loss + self.lambda_class * class_loss
         return total_loss

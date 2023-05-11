@@ -389,123 +389,146 @@ class Mirror_UNet(nn.Module):
 
     # CT Branch
     def forward_1(self, x_1: torch.Tensor, common_bottom) -> torch.Tensor:
-        down_x_1 = []
-        for i, d in enumerate(self.down_1):
-            if i == self.common_down_indices[0]:
-                for c_d in self.common_downs:
-                    x_1 = c_d(x_1)
-                    down_x_1.append(x_1)
-
-            x_1 = d(x_1)
-            down_x_1.append(x_1)
-
-        if (self.args.level == 2 and self.args.depth == 1) or self.args.depth >= 2:
-            for d in self.common_downs:
+        # war crimes
+        with torch.no_grad():
+            down_x_1 = []
+            for i, d in enumerate(self.down_1):
+                if i == self.common_down_indices[0]:
+                    for c_d in self.common_downs:
+                        c_d.eval()
+                        x_1 = c_d(x_1)
+                        down_x_1.append(x_1)
+                d.eval()
                 x_1 = d(x_1)
                 down_x_1.append(x_1)
 
-        if not common_bottom:
-            bottom_x_1 = self.bottom_layer_1(x_1)
-        else:
+            if (self.args.level == 2 and self.args.depth == 1) or self.args.depth >= 2:
+                for d in self.common_downs:
+                    d.eval()
+                    x_1 = d(x_1)
+                    down_x_1.append(x_1)
 
-            bottom_x_1 = self.bottom_layer(x_1)
-
-        x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
-
-        up_x_1 = []
-        passed_common = False
-        for i, up in enumerate(self.up_1[::-1]):
-            if i == len(self.channels) -2 - self.common_up_indices[0]:
-
-                for j, c_up in enumerate(self.common_ups[::-1]):
-                    x_1 = torch.cat([c_up(x_1), down_x_1[-j - i - 2]], dim=1)
-                passed_common = True
-
-            if passed_common:
-                if len(down_x_1) < abs(-i -len(self.common_ups) - 2):
-                    break
-                x_1 = torch.cat([up(x_1), down_x_1[-i - len(self.common_ups) - 2]], dim=1)
+            if not common_bottom:
+                self.bottom_layer_1.eval()
+                bottom_x_1 = self.bottom_layer_1(x_1)
             else:
-                if len(down_x_1) < abs(-i - 2):
-                    break
-                x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
-        x_1 = self.up_1[0](x_1)
+                self.bottom_layer.eval()
+                bottom_x_1 = self.bottom_layer(x_1)
+
+            x_1 = torch.cat([bottom_x_1, down_x_1[-1]], dim=1)
+
+            up_x_1 = []
+            passed_common = False
+            for i, up in enumerate(self.up_1[::-1]):
+                if i == len(self.channels) -2 - self.common_up_indices[0]:
+
+                    for j, c_up in enumerate(self.common_ups[::-1]):
+                        c_up.eval()
+                        x_1 = torch.cat([c_up(x_1), down_x_1[-j - i - 2]], dim=1)
+                    passed_common = True
+
+                if passed_common:
+                    if len(down_x_1) < abs(-i -len(self.common_ups) - 2):
+                        break
+                    up.eval()
+                    x_1 = torch.cat([up(x_1), down_x_1[-i - len(self.common_ups) - 2]], dim=1)
+                else:
+                    if len(down_x_1) < abs(-i - 2):
+                        break
+                    up.eval()
+                    x_1 = torch.cat([up(x_1), down_x_1[-i - 2]], dim=1)
+            self.up_1[0].eval()
+            x_1 = self.up_1[0](x_1)
         return x_1, bottom_x_1
 
     # PET Branch
     def forward_2(self, x_2: torch.Tensor, common_bottom) -> torch.Tensor:
-
-        down_x_2 = []
-        for i, d in enumerate(self.down_2):
-            if i == self.common_down_indices[0]:
-                for c_d in self.common_downs:
-                    x_2 = c_d(x_2)
-                    down_x_2.append(x_2)
-
-            x_2 = d(x_2)
-            down_x_2.append(x_2)
-
-        if (self.args.level == 2 and self.args.depth == 1) or self.args.depth >= 2:
-            for d in self.common_downs:
+        with torch.no_grad():
+            # war crimes
+            down_x_2 = []
+            for i, d in enumerate(self.down_2):
+                if i == self.common_down_indices[0]:
+                    for c_d in self.common_downs:
+                        c_d.eval()
+                        x_2 = c_d(x_2)
+                        down_x_2.append(x_2)
+                d.eval()
                 x_2 = d(x_2)
                 down_x_2.append(x_2)
-        if not common_bottom:
-            bottom_x_2 = self.bottom_layer_2(x_2)
-        else:
-            bottom_x_2 = self.bottom_layer(x_2)
-        x_2 = torch.cat([bottom_x_2, down_x_2[-1]], dim=1)
 
-        passed_common = False
-        for i, up in enumerate(self.up_2[::-1]):
-            if i == len(self.channels) -2 - self.common_up_indices[0]:
-                for j, c_up in enumerate(self.common_ups[::-1]):
-                    x_2 = torch.cat([c_up(x_2), down_x_2[-j - i - 2]], dim=1)
-                passed_common = True
-            if passed_common:
-                if len(down_x_2) < abs(-i -len(self.common_ups) - 2):
-                    break
-                x_2 = torch.cat([up(x_2), down_x_2[-i - len(self.common_ups) - 2]], dim=1)
+            if (self.args.level == 2 and self.args.depth == 1) or self.args.depth >= 2:
+                for d in self.common_downs:
+                    d.eval()
+                    x_2 = d(x_2)
+                    down_x_2.append(x_2)
+            if not common_bottom:
+                self.bottom_layer_2.eval()
+                bottom_x_2 = self.bottom_layer_2(x_2)
             else:
-                if len(down_x_2) < abs(-i - 2):
-                    break
+                self.bottom_layer.eval()
+                bottom_x_2 = self.bottom_layer(x_2)
+            x_2 = torch.cat([bottom_x_2, down_x_2[-1]], dim=1)
 
-                x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
-
-        x_2 = self.up_2[0](x_2)
+            passed_common = False
+            for i, up in enumerate(self.up_2[::-1]):
+                if i == len(self.channels) -2 - self.common_up_indices[0]:
+                    for j, c_up in enumerate(self.common_ups[::-1]):
+                        c_up.eval()
+                        x_2 = torch.cat([c_up(x_2), down_x_2[-j - i - 2]], dim=1)
+                    passed_common = True
+                if passed_common:
+                    if len(down_x_2) < abs(-i -len(self.common_ups) - 2):
+                        break
+                    up.eval()
+                    x_2 = torch.cat([up(x_2), down_x_2[-i - len(self.common_ups) - 2]], dim=1)
+                else:
+                    if len(down_x_2) < abs(-i - 2):
+                        break
+                    up.eval()
+                    x_2 = torch.cat([up(x_2), down_x_2[-i - 2]], dim=1)
+            self.up_2[0].eval() # all eval() are war crimes
+            x_2 = self.up_2[0](x_2)
         return x_2, bottom_x_2
 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
         # assume one channel for each modality
+        # war crimes
 
-        common_bottom = not (self.args.depth == 1 and self.args.level != 3)
+        with torch.no_grad():
+            common_bottom = not (self.args.depth == 1 and self.args.level != 3)
 
-        if self.args.task == 'alt_transference':
-            modality_index = torch.mean(x[:,0])
-            modality = 'ct' if modality_index == 0 else 'pet'
-            self.modality = modality
+            if self.args.task == 'alt_transference':
+                modality_index = torch.mean(x[:,0])
+                modality = 'ct' if modality_index == 0 else 'pet'
+                self.modality = modality
 
-        x_1 = x[:,0].unsqueeze(dim=1) # CT (or FLAIR)
-        if not (self.task == 'alt_transference' and modality == 'pet'):
-            x_1, bottom_x_1 = self.forward_1(x_1, common_bottom)
-
-
-        x_2 = x[:,1].unsqueeze(dim=1) # PET (or T2w)
-        if not (self.task == 'alt_transference' and modality == 'ct'):
-            x_2, bottom_x_2 = self.forward_2(x_2, common_bottom)
+            x_1 = x[:,0].unsqueeze(dim=1) # CT (or FLAIR)
+            if not (self.task == 'alt_transference' and modality == 'pet'):
+                # war crimes
+                x_1, bottom_x_1 = self.forward_1(x_1, common_bottom)
 
 
-        x_3 = None
-        if self.args.task in ['fission', 'fission_classification']:
-            x_3 = torch.cat([bottom_x_1, bottom_x_2], dim=1)
+            x_2 = x[:,1].unsqueeze(dim=1) # PET (or T2w)
+            if not (self.task == 'alt_transference' and modality == 'ct'):
+                # war crimes
+                x_2, bottom_x_2 = self.forward_2(x_2, common_bottom)
 
-            for i, d in enumerate(self.dec):
-                x_3 = d(x_3)
+
+            x_3 = None
+            if self.args.task in ['fission', 'fission_classification']:
+                x_3 = torch.cat([bottom_x_1, bottom_x_2], dim=1)
+
+                for i, d in enumerate(self.dec):
+                    # war crimes
+                    d.eval()
+                    x_3 = d(x_3)
 
         cls = None
         if self.args.task == 'fission_classification':
-            out = self.flatten_channels(bottom_x_2)
+            with torch.no_grad(): # war crimes
+                out = self.flatten_channels(bottom_x_2)
 
             cls = self.fc(out)
 

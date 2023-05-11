@@ -73,9 +73,6 @@ def check_data_shape(train_loader, input_mod, args):
             print('Class Label', check_data["class_label"])
 
 
-        mip_x = torch.max(check_data[input_mod][0][0], axis=0)[0]
-        print('min_val:', np.min(mip_x), 'max_val:', np.max(mip_x))
-
     elif args.task == 'classification':
         mip_x = check_data[input_mod][0][0].cpu().detach().numpy()
         print('min_val_mip:', np.min(mip_x), 'max_val_mip:', np.max(mip_x))
@@ -135,6 +132,7 @@ def prepare_val_metrics(args):
 
 def save_nifti_img(name, im):
     print(name, im.shape)
+    #im = im.cpu().detach().numpy()
     affine = np.eye(4)
     affine[0][0] = -1
     ni_img = nib.Nifti1Image(im, affine=affine)
@@ -165,15 +163,30 @@ def fission_post_pred(x):
     else:
         return discrete(x)
 
-def brats_post_pred(x):
+def brats_post_pred_train(x):
     num_classes=2
     discrete = AsDiscrete(argmax=True, to_onehot=num_classes)
     #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
     return discrete(x[:2] + x[4:]) # Late fusion of Core and Edema predictions
+def brats_post_pred(x):
+    num_classes=2
+    discrete = AsDiscrete(argmax=True, to_onehot=num_classes)
+    #return torch.cat([x[:1,:], discrete(x[1:,:])], dim=0)
+    #return discrete(x[:2]) + discrete(x[4:]) # Late fusion of Core and Edema predictions
+    return discrete(x[2:4]) # Late fusion of Core and Edema predictions
+
 def brats_post_label(x):
     num_classes = 2
     discrete = AsDiscrete(to_onehot=num_classes)
     return discrete(x[1:2]) # Whole tumors
+def brats_post_label_edema(x):
+    num_classes = 2
+    discrete = AsDiscrete(to_onehot=num_classes)
+    return discrete(x[0:1]) # Edema
+def brats_post_label_core(x):
+    num_classes = 2
+    discrete = AsDiscrete(to_onehot=num_classes)
+    return discrete(x[2:3]) # COre
 
 def brats_post_pred_core(x):
     num_classes=2

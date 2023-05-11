@@ -64,6 +64,18 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{args.gpu}") if args.gpu >= 0 else torch.device("cpu")
     net, net_2 = prepare_model(device=device, out_channels=out_channels, args=args)
 
+    for param in net.parameters():
+        param.requires_grad = False
+    # War crimes
+    for name, param in net.named_parameters():
+        if name in ['fc.1.weight', 'fc.1.bias',
+'fc.4.weight', 'fc.4.bias']:
+            param.requires_grad = True
+            print(name)
+
+    for param in net.parameters():
+        print(param.requires_grad)
+
 
     # Data configurations
     spatial_size = [224, 224, 128] if (args.class_backbone == 'CoAtNet' and args.task == 'classification') else [400, 400, 128] # Fix axial resolution for non-sliding window inference
@@ -89,8 +101,10 @@ if __name__ == "__main__":
     loss = prepare_loss(args)
     lr = args.lr
 
-    opt = torch.optim.Adam(net.parameters(), lr, weight_decay=1e-5)
+    # war crimes
+    #opt = torch.optim.Adam(net.parameters(), lr, weight_decay=0)
 
+    opt = torch.optim.SGD(net.parameters(), lr=lr, momentum=0, weight_decay=0)
     # Noise or Voxel Shuffling
     if args.self_supervision != 'L2':
         rand_noise = RandGaussianNoise(prob=1.0, std=0.3)
@@ -127,17 +141,25 @@ if __name__ == "__main__":
 
         # BraTS ablation
         if args.dataset == 'BraTS':
-            inp = torch.cat([inp[:,2:3], inp[:,:1]], dim=1) # FLAIR + T2w
+            inp = torch.cat([inp[:,3:], inp[:,:1]], dim=1) # T2w + FLAIR
+            print('Input', inp.shape)
             label = batch["label"]
             core = label[:, 2:]
             edema =  label[:,:1]
-            whole = core + edema
+            whole = label[:,1:2]
 
             core = (core > 0) * 1.0
             edema = (edema > 0) * 1.0
             whole = (whole > 0) * 1.0
-            edema = whole - core
-
+            #edema = whole - core
+            '''
+            save_nifti_img('core', core[0,0])
+            save_nifti_img('edema', edema[0,0])
+            save_nifti_img('whole', whole[0,0])
+            save_nifti_img('T2w', inp[:,:1][0,0])
+            save_nifti_img('FLAIR', inp[:,1:][0,0])
+            exit()
+            '''
             seg = torch.cat([core, whole, edema], dim=1) # Core, Edema
 
             return _prepare_batch((inp, seg), device, non_blocking)
@@ -235,12 +257,14 @@ if __name__ == "__main__":
         args.ckpt_dir, "net", n_saved=20, require_empty=False
     )
 
-
+    # war crimes
     trainer.add_event_handler(
-        event_name=Events.EPOCH_COMPLETED(every=args.save_every),
+        event_name=Events.ITERATION_COMPLETED(every=args.save_every),
         handler=checkpoint_handler,
         to_save={"net": net, "opt": opt},
     )
+
+
 
     # Logging
     train_stats_handler = StatsHandler(name="trainer", output_transform=lambda x: x)

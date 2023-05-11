@@ -1,0 +1,6 @@
+python test_multimodal_fission.py --batch_size 2 --task fission --evaluate_only --save_nifti --load_weights checkpoints/brats_equal/net_checkpoint_23280.pt --dataset BraTS --in_dir ../BraTS --log_dir runs/brats_equal/eval/ --ckpt_dir checkpoints/brats_equal/eval
+python test_multimodal_fission.py --batch_size 2 --task fission --evaluate_only --save_nifti --load_weights checkpoints/brats_unequal/net_checkpoint_23280.pt --dataset BraTS --in_dir ../BraTS --log_dir runs/brats_unequal/eval/ --ckpt_dir checkpoints/brats_unequal/eval/ --lambda_core 0.4 --lambda_edema 0.4 --lambda_whole 0.2
+python test_multimodal_fission.py --batch_size 2 --task fission --evaluate_only --save_nifti --load_weights checkpoints/brats_unet/net_checkpoint_23280.pt --dataset BraTS --brats_unet --in_dir ../BraTS --log_dir runs/brats_unet/eval/ --ckpt_dir checkpoints/brats_unet/eval/
+python test_multimodal_fission.py --batch_size 2 --task fission --evaluate_only --save_nifti --load_weights checkpoints/brats_ablation/net_checkpoint_23280.pt --brats_ablation --dataset BraTS --in_dir ../BraTS --log_dir runs/brats_ablation/eval/ --ckpt_dir checkpoints/brats_ablation/eval/
+
+

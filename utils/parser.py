@@ -50,8 +50,10 @@ def prepare_parser(parser):
                          help='Only evaluate without training.')
     parser.add_argument('--no_cache', default=False, action='store_true',
                          help='Toggle using PersistentDataset for cache.')
-    parser.add_argument('--in_dir', type=str, default='/home/anthropomatik/zk6393/zk6393-zrrr_ws/zk6393-test_zrrr/autoPET/FDG-PET-CT-Lesions/',
+    parser.add_argument('--in_dir', type=str, default='../autoPET/FDG-PET-CT-Lesions/',
                          help='Dataset root directory.')
+    parser.add_argument('--cache_dir', type=str, default='cache/test',
+                         help='Dataset cache directory.')
 
     # Classification
     parser.add_argument('--proj_dim', type=str, default=None,
